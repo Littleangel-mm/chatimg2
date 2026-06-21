@@ -1,5 +1,6 @@
 package com.example.chatimg2;
 
+import com.example.chatimg2.config.DatabaseMigration;
 import io.github.cdimascio.dotenv.Dotenv;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -11,6 +12,7 @@ public class Chatimg2Application {
 
     public static void main(String[] args) {
         loadEnv();
+        DatabaseMigration.run();
         SpringApplication.run(Chatimg2Application.class, args);
     }
 

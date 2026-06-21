@@ -12,9 +12,16 @@ const navigating = ref(false)
 let removeBefore = null
 let removeAfter = null
 
+function onWindowFocus() {
+  if (userStore.isActivated) {
+    userStore.syncCreditsFromServer()
+  }
+}
+
 onMounted(() => {
   userStore.initSession()
   prefetchOnIdle()
+  window.addEventListener('focus', onWindowFocus)
 
   removeBefore = router.beforeEach((to, from, next) => {
     if (to.path !== from.path) navigating.value = true
@@ -27,6 +34,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('focus', onWindowFocus)
   removeBefore?.()
   removeAfter?.()
 })

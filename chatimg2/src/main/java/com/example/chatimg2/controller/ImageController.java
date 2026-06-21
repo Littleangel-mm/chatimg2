@@ -1,6 +1,7 @@
 package com.example.chatimg2.controller;
 
-import org.springframework.beans.factory.annotation.Value;
+import com.example.chatimg2.config.ImageStorageConfig;
+import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.MediaType;
@@ -8,19 +9,21 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 @RestController
 @RequestMapping("/api/images")
+@RequiredArgsConstructor
 public class ImageController {
 
-    @Value("${app.image.backup-path}")
-    private String backupPath;
+    private final ImageStorageConfig storageConfig;
 
     @GetMapping("/{filename}")
     public ResponseEntity<Resource> getImage(@PathVariable String filename) {
         try {
-            Path filePath = Paths.get(backupPath).resolve(filename).normalize();
+            Path filePath = storageConfig.getBackupDir().resolve(filename).normalize();
+            if (!filePath.startsWith(storageConfig.getBackupDir())) {
+                return ResponseEntity.notFound().build();
+            }
             Resource resource = new UrlResource(filePath.toUri());
 
             if (resource.exists() && resource.isReadable()) {

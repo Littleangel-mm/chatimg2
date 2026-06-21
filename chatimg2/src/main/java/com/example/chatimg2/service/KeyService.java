@@ -33,7 +33,10 @@ public class KeyService {
     }
 
     public Optional<ActivationKey> getByKeyCode(String keyCode) {
-        return keyRepository.findByKeyCode(keyCode);
+        if (keyCode == null || keyCode.isBlank()) {
+            return Optional.empty();
+        }
+        return keyRepository.findByKeyCode(keyCode.trim().toUpperCase());
     }
 
     public ActivationKey createKey(Integer totalCredits) {
@@ -53,9 +56,25 @@ public class KeyService {
 
     @Transactional
     public ActivationKey updateKeyCredits(Integer id, Integer totalCredits) {
+        if (totalCredits == null || totalCredits < 0) {
+            throw new RuntimeException("积分必须大于等于 0");
+        }
         ActivationKey key = keyRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("密钥不存在"));
+        if (totalCredits < key.getUsedCredits()) {
+            throw new RuntimeException(
+                    "总积分不能小于已用积分（" + key.getUsedCredits() + "），请设置为至少 "
+                            + key.getUsedCredits() + "，或使用「重置已用」");
+        }
         key.setTotalCredits(totalCredits);
+        return keyRepository.save(key);
+    }
+
+    @Transactional
+    public ActivationKey resetUsedCredits(Integer id) {
+        ActivationKey key = keyRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+        key.setUsedCredits(0);
         return keyRepository.save(key);
     }
 
@@ -68,7 +87,10 @@ public class KeyService {
     }
 
     public Optional<ActivationKey> activate(String keyCode) {
-        Optional<ActivationKey> keyOpt = keyRepository.findByKeyCode(keyCode);
+        if (keyCode == null || keyCode.isBlank()) {
+            return Optional.empty();
+        }
+        Optional<ActivationKey> keyOpt = keyRepository.findByKeyCode(keyCode.trim().toUpperCase());
         if (keyOpt.isPresent()) {
             ActivationKey key = keyOpt.get();
             if (key.getStatus() == 0) {
@@ -89,5 +111,13 @@ public class KeyService {
         key.setUsedCredits(key.getUsedCredits() + cost);
         keyRepository.save(key);
         return true;
+    }
+
+    @Transactional
+    public void refundCredits(Integer keyId, int amount) {
+        ActivationKey key = keyRepository.findById(keyId)
+                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+        key.setUsedCredits(Math.max(0, key.getUsedCredits() - amount));
+        keyRepository.save(key);
     }
 }

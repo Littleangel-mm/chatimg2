@@ -53,8 +53,21 @@ public class AdminController {
     @PutMapping("/keys/{id}")
     public ApiResponse<ActivationKey> updateKey(@PathVariable Integer id, @RequestBody KeyRequest request) {
         try {
+            if (request == null || request.getTotalCredits() == null) {
+                return ApiResponse.error(400, "请填写积分");
+            }
             ActivationKey key = keyService.updateKeyCredits(id, request.getTotalCredits());
             return ApiResponse.success("密钥更新成功", key);
+        } catch (RuntimeException e) {
+            return ApiResponse.error(400, e.getMessage());
+        }
+    }
+
+    @PostMapping("/keys/{id}/reset-used")
+    public ApiResponse<ActivationKey> resetUsedCredits(@PathVariable Integer id) {
+        try {
+            ActivationKey key = keyService.resetUsedCredits(id);
+            return ApiResponse.success("已用积分已重置", key);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
         }

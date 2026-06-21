@@ -9,19 +9,24 @@ const error = ref('')
 
 onMounted(() => {
   window.addEventListener('open-key-modal', open)
-  if (!userStore.isActivated) {
-    open()
+  if (userStore.isActivated) {
+    userStore.syncCreditsFromServer()
+    return
   }
+  open()
 })
 
 onUnmounted(() => {
   window.removeEventListener('open-key-modal', open)
 })
 
-function open() {
+async function open() {
   visible.value = true
   inputKey.value = userStore.keyCode || ''
   error.value = ''
+  if (userStore.isActivated) {
+    await userStore.syncCreditsFromServer()
+  }
 }
 
 function close() {
@@ -52,7 +57,7 @@ async function submit() {
         <div class="modal card">
           <div class="modal-header">
             <h2>激活密钥</h2>
-            <p>输入管理员发放的密钥以开始使用</p>
+            <p>输入管理员在后台创建/修改的密钥编号（如 IMG2-XXXXXXXX）</p>
           </div>
           <input
             v-model="inputKey"

@@ -28,6 +28,7 @@ public class UserController {
         if (keyCode == null || keyCode.isBlank()) {
             return ApiResponse.error(400, "请输入密钥");
         }
+        keyCode = keyCode.trim().toUpperCase();
 
         Optional<ActivationKey> keyOpt = keyService.activate(keyCode);
         if (keyOpt.isEmpty()) {
@@ -56,13 +57,25 @@ public class UserController {
         }
 
         try {
-            GenerationRecord record = imageGenerationService.generateImage(
+            GenerationRecord record = imageGenerationService.submitGeneration(
                     request.getKeyCode(),
                     request.getPrompt(),
                     request.getType(),
                     request.getSourceImage(),
                     request.getModel());
-            return ApiResponse.success("图片生成成功", record);
+            return ApiResponse.success("任务已提交，正在生成中", record);
+        } catch (RuntimeException e) {
+            return ApiResponse.error(400, e.getMessage());
+        }
+    }
+
+    @GetMapping("/generate/{recordId}")
+    public ApiResponse<GenerationRecord> getGenerateStatus(
+            @PathVariable Integer recordId,
+            @RequestParam String keyCode) {
+        try {
+            GenerationRecord record = imageGenerationService.getRecordStatus(keyCode, recordId);
+            return ApiResponse.success(record);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
         }

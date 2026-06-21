@@ -23,7 +23,13 @@ const items = computed(() => userStore.history)
 
       <div v-else class="gallery-grid">
         <div v-for="(item, index) in items" :key="item.id" class="gallery-item">
+          <div v-if="item.status === 'processing'" class="processing">
+            <span class="spin">⟳</span>
+            <span>生成中...</span>
+            <span v-if="item.taskCode" class="task-code">{{ item.taskCode }}</span>
+          </div>
           <img
+            v-else-if="getImageUrl(item)"
             :src="getImageUrl(item)"
             :alt="item.prompt"
             loading="lazy"
@@ -31,6 +37,7 @@ const items = computed(() => userStore.history)
             :fetchpriority="index < 4 ? 'high' : 'low'"
           />
           <div class="item-overlay">
+            <span v-if="item.taskCode" class="item-task">{{ item.taskCode }}</span>
             <span class="item-type">{{ item.generationType === 'img2img' ? 'Image to Image' : 'Text to Image' }}</span>
             <p class="item-prompt">{{ item.prompt }}</p>
           </div>
@@ -95,6 +102,37 @@ const items = computed(() => userStore.history)
   transition: transform 0.3s;
 }
 
+.processing {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(124, 92, 255, 0.08);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.task-code {
+  font-size: 11px;
+  font-family: monospace;
+  color: #b49cff;
+  letter-spacing: 0.03em;
+}
+
+.spin {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+  font-size: 24px;
+  color: var(--accent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .gallery-item:hover img {
   transform: scale(1.05);
 }
@@ -121,6 +159,14 @@ const items = computed(() => userStore.history)
   letter-spacing: 0.05em;
   color: #b49cff;
   margin-bottom: 4px;
+}
+
+.item-task {
+  font-size: 11px;
+  font-family: monospace;
+  color: #d4c4ff;
+  margin-bottom: 6px;
+  letter-spacing: 0.03em;
 }
 
 .item-prompt {

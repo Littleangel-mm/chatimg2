@@ -46,10 +46,15 @@ function onAdminEnter() {
 
       <div class="header-actions">
         <template v-if="userStore.isActivated">
-          <span class="credits-badge" :class="{ syncing: userStore.refreshing }">
+          <button
+            class="credits-badge tap"
+            :class="{ syncing: userStore.syncingCredits || userStore.refreshing }"
+            title="点击刷新积分"
+            @click="userStore.syncCreditsFromServer()"
+          >
             <span class="credits-dot"></span>
             {{ userStore.remainingCredits }} 积分
-          </span>
+          </button>
         </template>
         <button class="btn-ghost tap" @click="openKeyModal">
           {{ userStore.isActivated ? '切换密钥' : '激活密钥' }}
@@ -129,6 +134,9 @@ function onAdminEnter() {
   font-size: 13px;
   font-weight: 500;
   color: #b49cff;
+  cursor: pointer;
+  border-width: 1px;
+  font-family: inherit;
 }
 
 .credits-dot {

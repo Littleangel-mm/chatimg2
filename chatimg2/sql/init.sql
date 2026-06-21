@@ -24,17 +24,21 @@ CREATE TABLE IF NOT EXISTS activation_keys (
 CREATE TABLE IF NOT EXISTS generation_records (
     id SERIAL PRIMARY KEY,
     key_id INTEGER NOT NULL REFERENCES activation_keys(id) ON DELETE CASCADE,
+    task_code VARCHAR(32) NOT NULL UNIQUE,        -- 任务编号，如 TASK-20260621-A1B2C3D4
     prompt TEXT NOT NULL,                         -- 用户提示词
-    image_url TEXT,                               -- API返回的图片链接
-    local_path VARCHAR(500),                     -- 本地备份路径
+    image_url VARCHAR(500),                       -- 图片相对路径，如 TASK-20260621-XXX.png
+    local_path VARCHAR(500),                     -- 已废弃，仅兼容旧数据
     generation_type VARCHAR(20) DEFAULT 'text2img',
     source_image_path VARCHAR(500),
-    credits_cost INTEGER NOT NULL DEFAULT 20,     -- 消耗积分（默认20）
+    credits_cost INTEGER NOT NULL DEFAULT 20,
+    status VARCHAR(20) DEFAULT 'processing',
+    error_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_generation_records_key_id ON generation_records(key_id);
+CREATE INDEX IF NOT EXISTS idx_generation_records_task_code ON generation_records(task_code);
 CREATE INDEX IF NOT EXISTS idx_activation_keys_key_code ON activation_keys(key_code);
 
 -- 默认管理员 (密码: admin123, SHA256加密)

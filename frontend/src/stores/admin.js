@@ -92,7 +92,18 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   async function updateKey(id, totalCredits) {
+    if (!Number.isFinite(totalCredits) || totalCredits < 0) {
+      throw new Error('请填写有效积分')
+    }
     const { data } = await api.put(`/admin/keys/${id}`, { totalCredits })
+    if (data.code !== 200) throw new Error(data.message)
+    invalidateCache()
+    await fetchKeys(page.value)
+    return data.data
+  }
+
+  async function resetUsedCredits(id) {
+    const { data } = await api.post(`/admin/keys/${id}/reset-used`)
     if (data.code !== 200) throw new Error(data.message)
     invalidateCache()
     await fetchKeys(page.value)
@@ -109,6 +120,6 @@ export const useAdminStore = defineStore('admin', () => {
 
   return {
     admin, keys, loading, tableLoading, page, size, total, totalPages,
-    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey
+    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits
   }
 })

@@ -10,7 +10,7 @@ const adminStore = useAdminStore()
 
 const newCredits = ref(100)
 const editId = ref(null)
-const editCredits = ref(100)
+const editRemaining = ref(100)
 const error = ref('')
 const message = ref('')
 const creating = ref(false)
@@ -60,14 +60,32 @@ function copyKey(code) {
 
 function startEdit(key) {
   editId.value = key.id
-  editCredits.value = key.totalCredits
+  editRemaining.value = Math.max(0, key.totalCredits - key.usedCredits)
 }
 
 async function saveEdit() {
+  const key = adminStore.keys.find(k => k.id === editId.value)
+  if (!key) return
+  if (!Number.isFinite(editRemaining.value) || editRemaining.value < 0) {
+    error.value = '请填写有效的剩余积分'
+    return
+  }
   try {
-    await adminStore.updateKey(editId.value, editCredits.value)
+    const newTotal = key.usedCredits + editRemaining.value
+    await adminStore.updateKey(editId.value, newTotal)
     editId.value = null
     message.value = '更新成功'
+    setTimeout(() => message.value = '', 2000)
+  } catch (e) {
+    error.value = e.response?.data?.message || e.message
+  }
+}
+
+async function resetUsed(id) {
+  if (!confirm('确定重置该密钥的已用积分？剩余积分将等于总积分。')) return
+  try {
+    await adminStore.resetUsedCredits(id)
+    message.value = '已用积分已重置'
     setTimeout(() => message.value = '', 2000)
   } catch (e) {
     error.value = e.response?.data?.message || e.message
@@ -147,14 +165,14 @@ function goPage(p) {
                 <code>{{ key.keyCode }}</code>
                 <button class="btn-copy" title="复制" @click="copyKey(key.keyCode)">📋</button>
               </td>
+              <td>{{ key.totalCredits }}</td>
+              <td>{{ key.usedCredits }}</td>
               <td>
                 <template v-if="editId === key.id">
-                  <input v-model.number="editCredits" type="number" class="input input-xs" />
+                  <input v-model.number="editRemaining" type="number" min="0" class="input input-xs" title="设置剩余积分" />
                 </template>
-                <template v-else>{{ key.totalCredits }}</template>
+                <template v-else>{{ Math.max(0, key.totalCredits - key.usedCredits) }}</template>
               </td>
-              <td>{{ key.usedCredits }}</td>
-              <td>{{ key.totalCredits - key.usedCredits }}</td>
               <td>
                 <span :class="['status', key.status === 1 ? 'active' : 'disabled']">
                   {{ key.status === 1 ? '启用' : '禁用' }}
@@ -167,7 +185,8 @@ function goPage(p) {
                   <button class="btn-sm" @click="editId = null">取消</button>
                 </template>
                 <template v-else>
-                  <button class="btn-sm" @click="startEdit(key)">改积分</button>
+                  <button class="btn-sm" @click="startEdit(key)">改剩余</button>
+                  <button class="btn-sm" @click="resetUsed(key.id)">重置已用</button>
                   <button class="btn-sm danger" @click="removeKey(key.id)">删除</button>
                 </template>
               </td>

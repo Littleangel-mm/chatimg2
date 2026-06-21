@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface GenerationRecordRepository extends JpaRepository<GenerationRecord, Integer> {
     List<GenerationRecord> findTop30ByKeyIdOrderByCreatedAtDesc(Integer keyId);
+
+    boolean existsByTaskCode(String taskCode);
 }
