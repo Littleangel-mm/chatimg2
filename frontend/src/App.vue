@@ -1,13 +1,16 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
 import AppHeader from './components/AppHeader.vue'
 import { prefetchOnIdle, prefetchRoute } from './utils/prefetch'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const navigating = ref(false)
+
+const showHeader = computed(() => route.path.startsWith('/admin'))
 
 let removeBefore = null
 let removeAfter = null
@@ -41,12 +44,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-root">
+  <div class="app-root" :class="{ 'chat-mode': !showHeader }">
     <div class="nav-bar" :class="{ active: navigating }" />
-    <AppHeader />
-    <router-view v-slot="{ Component, route }">
+    <AppHeader v-if="showHeader" />
+    <router-view v-slot="{ Component, route: r }">
       <keep-alive :include="['home', 'admin-keys']">
-        <component v-if="Component" :is="Component" :key="route.name" class="page-view" />
+        <component v-if="Component" :is="Component" :key="r.name" class="page-view" />
       </keep-alive>
       <div v-if="!Component" class="page-loading">加载中...</div>
     </router-view>
@@ -56,6 +59,18 @@ onUnmounted(() => {
 <style scoped>
 .app-root {
   min-height: 100vh;
+}
+
+.app-root.chat-mode {
+  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-root.chat-mode .page-view {
+  height: 100%;
+  animation: none;
 }
 
 .page-view {

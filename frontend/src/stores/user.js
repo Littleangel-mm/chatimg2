@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '../api'
+import { useConversationsStore } from './conversations'
 
 const CACHE_KEY = 'userCache'
 const POLL_INTERVAL_MS = 4000
@@ -86,6 +87,11 @@ export const useUserStore = defineStore('user', () => {
       history.value.unshift(record)
     }
     persist()
+    try {
+      useConversationsStore().syncRecord(record)
+    } catch {
+      /* store may not be ready during init */
+    }
   }
 
   async function activate(code) {
@@ -97,6 +103,7 @@ export const useUserStore = defineStore('user', () => {
       keyCode.value = normalized
       localStorage.setItem('keyCode', normalized)
       applyActivationData(data.data)
+      useConversationsStore().bindKeyCode(normalized)
       return data.data
     } finally {
       activating.value = false
@@ -109,6 +116,13 @@ export const useUserStore = defineStore('user', () => {
     if (data.code === 200) {
       history.value = data.data || []
       persist()
+      try {
+        const convStore = useConversationsStore()
+        convStore.bindKeyCode(keyCode.value)
+        convStore.importFromHistory(history.value, keyCode.value)
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -150,6 +164,11 @@ export const useUserStore = defineStore('user', () => {
   function initSession() {
     if (!keyCode.value) return
     hydrateFromCache()
+    try {
+      useConversationsStore().bindKeyCode(keyCode.value)
+    } catch {
+      /* ignore */
+    }
     syncCreditsFromServer()
       .then(ok => {
         if (ok) fetchHistory().catch(() => {})
@@ -219,6 +238,11 @@ export const useUserStore = defineStore('user', () => {
     history.value = []
     localStorage.removeItem('keyCode')
     localStorage.removeItem(CACHE_KEY)
+    try {
+      useConversationsStore().clearAll()
+    } catch {
+      /* ignore */
+    }
   }
 
   return {
