@@ -94,7 +94,7 @@ async function submit() {
 
 .field input:focus { border-color: var(--accent); }
 
-.error { color: #f87171; font-size: 13px; margin-bottom: 12px; }
+.error { color: var(--danger); font-size: 13px; margin-bottom: 12px; }
 
 .full { width: 100%; padding: 14px; }
 

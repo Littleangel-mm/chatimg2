@@ -127,15 +127,18 @@ function remove(id) {
 }
 
 .sidebar-toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover);
   color: var(--text);
 }
 
 .brand {
+  font-family: var(--font-serif);
   font-weight: 700;
-  font-size: 16px;
+  font-size: 22px;
+  letter-spacing: 0.5px;
   background: var(--gradient);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
@@ -150,32 +153,38 @@ function remove(id) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 14px;
   text-align: left;
-  transition: background 0.15s;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
 }
 
 .new-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-blush);
+  transform: translateY(-1px);
 }
 
 .new-btn.secondary {
   background: transparent;
+  box-shadow: none;
 }
 
 .new-btn.gallery {
-  background: transparent;
-  border-color: rgba(124, 92, 255, 0.3);
-  color: #b49cff;
+  background: var(--gradient);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 6px 18px rgba(224, 155, 176, 0.35);
 }
 
 .new-btn.gallery:hover {
-  background: rgba(124, 92, 255, 0.12);
+  background: var(--gradient);
+  opacity: 0.94;
 }
 
 .new-btn .icon {
@@ -206,13 +215,12 @@ function remove(id) {
   transition: background 0.12s;
 }
 
-.conv-item:hover,
-.conv-item.active {
-  background: rgba(255, 255, 255, 0.06);
+.conv-item:hover {
+  background: var(--hover);
 }
 
 .conv-item.active {
-  background: rgba(124, 92, 255, 0.12);
+  background: var(--accent-soft);
 }
 
 .conv-item:hover :deep(.menu-trigger),
@@ -263,19 +271,21 @@ function remove(id) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 9px 14px;
+  border-radius: 999px;
   font-size: 13px;
-  color: #b49cff;
+  font-weight: 500;
+  color: var(--accent-hover);
   cursor: pointer;
-  background: rgba(124, 92, 255, 0.1);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
 }
 
 .credits .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #7c5cff;
+  background: var(--accent);
 }
 
 .admin-link {

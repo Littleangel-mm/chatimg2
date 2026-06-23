@@ -69,7 +69,7 @@ function onAdminEnter() {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(8, 8, 12, 0.85);
+  background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }
@@ -85,8 +85,10 @@ function onAdminEnter() {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--font-serif);
   font-weight: 700;
-  font-size: 20px;
+  font-size: 24px;
+  color: var(--text-strong);
 }
 
 .logo-icon {
@@ -111,11 +113,11 @@ function onAdminEnter() {
 
 .nav-link:hover,
 .nav-link.active {
-  color: var(--text);
-  background: rgba(255,255,255,0.05);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
 }
 
-.admin-link { color: #b49cff; }
+.admin-link { color: var(--gold); }
 
 .header-actions {
   display: flex;
@@ -128,12 +130,12 @@ function onAdminEnter() {
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  background: rgba(124, 92, 255, 0.15);
-  border: 1px solid rgba(124, 92, 255, 0.3);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
   border-radius: 999px;
   font-size: 13px;
   font-weight: 500;
-  color: #b49cff;
+  color: var(--accent-hover);
   cursor: pointer;
   border-width: 1px;
   font-family: inherit;
@@ -143,7 +145,7 @@ function onAdminEnter() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #7c5cff;
+  background: var(--accent);
 }
 
 .credits-badge.syncing { opacity: 0.7; }

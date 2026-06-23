@@ -64,7 +64,7 @@ onMounted(() => {
     z-index: 200;
     transform: translateX(-100%);
     transition: transform 0.2s;
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 4px 0 30px rgba(176, 120, 120, 0.25);
   }
 
   .sidebar-wrap.open {
@@ -75,7 +75,7 @@ onMounted(() => {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(70, 45, 50, 0.32);
     z-index: 199;
   }
 }

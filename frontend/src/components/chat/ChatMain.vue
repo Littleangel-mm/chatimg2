@@ -295,7 +295,8 @@ onActivated(applyPendingPrompt)
 }
 
 .header-title h1 {
-  font-size: 16px;
+  font-family: var(--font-serif);
+  font-size: 20px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -304,24 +305,25 @@ onActivated(applyPendingPrompt)
 
 .type-badge {
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(124, 92, 255, 0.15);
-  color: #b49cff;
+  background: var(--gold-soft);
+  color: var(--gold);
   flex-shrink: 0;
 }
 
 .key-btn {
-  padding: 8px 14px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-hover);
   font-size: 13px;
 }
 
 .key-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
+  background: var(--accent);
+  color: #fff;
 }
 
 .welcome {
@@ -338,9 +340,11 @@ onActivated(applyPendingPrompt)
 }
 
 .welcome-inner h2 {
-  font-size: 28px;
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 38px;
+  font-weight: 600;
   margin-bottom: 12px;
+  color: var(--text-strong);
 }
 
 .welcome-inner p {
@@ -356,17 +360,20 @@ onActivated(applyPendingPrompt)
 }
 
 .welcome-btn {
-  padding: 12px 20px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 14px;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.1s, background 0.15s, border-color 0.15s;
 }
 
 .welcome-btn:hover {
-  background: rgba(124, 92, 255, 0.12);
-  border-color: rgba(124, 92, 255, 0.3);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  transform: translateY(-1px);
 }
 
 .messages {
@@ -385,17 +392,17 @@ onActivated(applyPendingPrompt)
 .input-area {
   flex-shrink: 0;
   padding: 16px 24px 24px;
-  background: linear-gradient(transparent, var(--bg) 20%);
+  background: linear-gradient(transparent, var(--bg) 28%);
 }
 
 .input-card {
   max-width: var(--chat-max-width);
   margin: 0 auto;
-  background: var(--bg-input);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 12px;
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow);
 }
 
 .upload-row {
@@ -475,9 +482,9 @@ onActivated(applyPendingPrompt)
 
 .model-select {
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--text-muted);
   font-size: 12px;
   outline: none;
@@ -485,14 +492,15 @@ onActivated(applyPendingPrompt)
 }
 
 .send-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
   background: var(--gradient);
   color: #fff;
   font-size: 18px;
   font-weight: 700;
   flex-shrink: 0;
+  box-shadow: 0 6px 16px rgba(224, 155, 176, 0.4);
 }
 
 .send-btn:disabled {
@@ -501,7 +509,7 @@ onActivated(applyPendingPrompt)
 }
 
 .error {
-  color: #f87171;
+  color: var(--danger);
   font-size: 13px;
   margin-top: 8px;
 }

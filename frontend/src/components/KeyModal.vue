@@ -80,7 +80,8 @@ async function submit() {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(70, 45, 50, 0.32);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -95,7 +96,8 @@ async function submit() {
 }
 
 .modal-header h2 {
-  font-size: 22px;
+  font-family: var(--font-serif);
+  font-size: 28px;
   margin-bottom: 8px;
 }
 
@@ -122,7 +124,7 @@ async function submit() {
 }
 
 .error {
-  color: #f87171;
+  color: var(--danger);
   font-size: 13px;
   margin-bottom: 12px;
 }

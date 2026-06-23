@@ -212,22 +212,25 @@ function goHome() {
   display: flex;
   align-items: center;
   gap: 20px;
-  padding: 16px 24px;
+  padding: 18px 28px;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
   flex-shrink: 0;
 }
 
 .back-btn {
-  padding: 8px 14px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 13px;
 }
 
 .back-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--text);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 
 .insp-heading {
@@ -237,10 +240,12 @@ function goHome() {
 }
 
 .insp-heading h1 {
-  font-size: 20px;
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 600;
   background: var(--gradient);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
@@ -253,22 +258,24 @@ function goHome() {
   display: flex;
   gap: 4px;
   margin-left: auto;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-sidebar);
   padding: 4px;
-  border-radius: 10px;
+  border-radius: 999px;
 }
 
 .insp-tab {
-  padding: 6px 18px;
-  border-radius: 8px;
+  padding: 7px 20px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
   font-size: 13px;
+  transition: background 0.15s, color 0.15s;
 }
 
 .insp-tab.active {
-  background: var(--bg-input);
-  color: var(--text);
+  background: var(--gradient);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(224, 155, 176, 0.35);
 }
 
 .insp-toast {
@@ -279,10 +286,10 @@ function goHome() {
   z-index: 1020;
   padding: 10px 20px;
   border-radius: 999px;
-  background: rgba(124, 92, 255, 0.95);
+  background: var(--gradient);
   color: #fff;
   font-size: 13px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(224, 155, 176, 0.45);
 }
 
 .insp-body {
@@ -305,11 +312,18 @@ function goHome() {
   position: relative;
   break-inside: avoid;
   margin-bottom: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
   border: 1px solid var(--border);
   background: var(--bg-input);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.insp-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
 }
 
 .insp-card img {
@@ -385,15 +399,19 @@ function goHome() {
 .insp-loadmore-btn {
   display: block;
   margin: 12px auto 0;
-  padding: 10px 28px;
+  padding: 11px 30px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
   color: var(--text);
   font-size: 13px;
+  box-shadow: var(--shadow-sm);
 }
 
 .insp-loadmore-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
 }
 
 .insp-end {
@@ -407,8 +425,8 @@ function goHome() {
 .insp-detail-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(4px);
+  background: rgba(70, 45, 50, 0.4);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -426,11 +444,12 @@ function goHome() {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: var(--shadow-lg);
 }
 
 .insp-detail-img {
   width: 48%;
-  background: #000;
+  background: var(--bg-sidebar);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -452,8 +471,9 @@ function goHome() {
 }
 
 .insp-detail-info h3 {
-  font-size: 14px;
-  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: 20px;
+  color: var(--text-strong);
   margin-bottom: 12px;
 }
 
@@ -480,24 +500,28 @@ function goHome() {
 .btn-ghost-line {
   flex: 1;
   padding: 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   color: var(--text);
   font-size: 14px;
 }
 
 .btn-ghost-line:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
 }
 
 .btn-grad {
   flex: 1.4;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--gradient);
   color: #fff;
   font-weight: 600;
   font-size: 14px;
+  box-shadow: 0 8px 20px rgba(224, 155, 176, 0.4);
 }
 
 .detail-close {
@@ -507,10 +531,11 @@ function goHome() {
   z-index: 2;
   width: 36px;
   height: 36px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-strong);
   font-size: 15px;
+  box-shadow: var(--shadow-sm);
 }
 
 .spin {

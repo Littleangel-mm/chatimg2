@@ -65,27 +65,27 @@ const isFailed = computed(() => props.message.status === 'failed')
 }
 
 .avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-blush);
   color: var(--text-muted);
 }
 
 .message.user .avatar {
-  background: rgba(124, 92, 255, 0.2);
-  color: #b49cff;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 
 .message.assistant .avatar {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
+  background: var(--gold-soft);
+  color: var(--gold);
 }
 
 .bubble {
@@ -107,11 +107,12 @@ const isFailed = computed(() => props.message.status === 'failed')
 }
 
 .message.user .text {
-  background: rgba(124, 92, 255, 0.12);
-  border: 1px solid rgba(124, 92, 255, 0.2);
+  background: var(--gradient);
+  color: #fff;
   padding: 12px 16px;
-  border-radius: 16px 16px 4px 16px;
+  border-radius: 18px 18px 4px 18px;
   max-width: 85%;
+  box-shadow: 0 6px 16px rgba(224, 155, 176, 0.32);
 }
 
 .source-thumb {
@@ -145,10 +146,10 @@ const isFailed = computed(() => props.message.status === 'failed')
 
 .assistant-error {
   padding: 12px 16px;
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.25);
+  background: rgba(210, 115, 138, 0.1);
+  border: 1px solid rgba(210, 115, 138, 0.28);
   border-radius: 12px;
-  color: #f87171;
+  color: var(--danger);
   font-size: 14px;
 }
 

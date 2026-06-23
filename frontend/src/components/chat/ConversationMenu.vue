@@ -131,7 +131,7 @@ onUnmounted(() => {
 
 .menu-trigger:hover,
 .menu-trigger.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-strong);
   color: var(--text);
 }
 
@@ -155,14 +155,14 @@ onUnmounted(() => {
 .rename-btn {
   width: 24px;
   height: 24px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  background: var(--hover);
   color: var(--text-muted);
   font-size: 12px;
 }
 
 .rename-btn.ok {
-  color: #4ade80;
+  color: var(--success);
 }
 </style>
 
@@ -172,9 +172,9 @@ onUnmounted(() => {
   min-width: 140px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
 }
 
@@ -191,10 +191,10 @@ onUnmounted(() => {
 }
 
 .dropdown button:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover);
 }
 
 .dropdown button.danger {
-  color: #f87171;
+  color: var(--danger);
 }
 </style>
