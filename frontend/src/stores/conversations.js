@@ -20,6 +20,17 @@ function writeStored(keyCode, data) {
   localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
 }
 
+function recordIdEquals(a, b) {
+  return Number(a) === Number(b)
+}
+
+function resolveRecordStatus(record) {
+  const status = (record?.status || '').toLowerCase()
+  if (status === 'completed' || status === 'failed') return status
+  if (record?.imagePath && status === 'processing') return 'completed'
+  return status || 'processing'
+}
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -153,10 +164,10 @@ export const useConversationsStore = defineStore('conversations', () => {
       let matched = false
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
-        if (msg.recordId === record.id || msg.record?.id === record.id) {
+        if (recordIdEquals(msg.recordId, record.id) || recordIdEquals(msg.record?.id, record.id)) {
           msg.recordId = record.id
           msg.record = { ...record }
-          msg.status = record.status || msg.status
+          msg.status = resolveRecordStatus(record)
           msg.errorMessage = record.errorMessage || null
           conv.updatedAt = Date.now()
           changed = true
@@ -171,8 +182,53 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (pending) {
           pending.recordId = record.id
           pending.record = { ...record }
-          pending.status = record.status || pending.status
+          pending.status = resolveRecordStatus(record)
           pending.errorMessage = record.errorMessage || null
+          conv.updatedAt = Date.now()
+          changed = true
+        }
+      }
+    }
+
+    if (changed) persist()
+  }
+
+  function failAssistantForRecord(recordId, errorMessage) {
+    let changed = false
+    for (const conv of conversations.value) {
+      for (const msg of conv.messages) {
+        if (msg.role !== 'assistant') continue
+        if (!recordIdEquals(msg.recordId, recordId) && !recordIdEquals(msg.record?.id, recordId)) continue
+        msg.status = 'failed'
+        msg.errorMessage = errorMessage || '生成失败'
+        conv.updatedAt = Date.now()
+        changed = true
+      }
+    }
+    if (changed) persist()
+  }
+
+  function syncFromHistoryRecords(records) {
+    if (!records?.length) return
+    const byId = new Map(records.map(record => [Number(record.id), record]))
+    let changed = false
+
+    for (const conv of conversations.value) {
+      for (const msg of conv.messages) {
+        if (msg.role !== 'assistant') continue
+        const id = msg.recordId || msg.record?.id
+        if (id == null) continue
+        const latest = byId.get(Number(id))
+        if (!latest) continue
+
+        const nextStatus = resolveRecordStatus(latest)
+        const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const imageChanged = latest.imagePath !== msg.record?.imagePath
+        if (nextStatus !== prevStatus || imageChanged) {
+          msg.recordId = latest.id
+          msg.record = { ...latest }
+          msg.status = nextStatus
+          msg.errorMessage = latest.errorMessage || null
           conv.updatedAt = Date.now()
           changed = true
         }
@@ -213,7 +269,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         role: 'assistant',
         recordId: record.id,
         record: { ...record },
-        status: record.status || 'completed',
+        status: resolveRecordStatus(record),
         errorMessage: record.errorMessage || null,
         createdAt: new Date(record.createdAt || Date.now()).getTime() + 1
       }
@@ -264,6 +320,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     addExchange,
     syncRecord,
     failLatestAssistant,
+    failAssistantForRecord,
+    syncFromHistoryRecords,
     importFromHistory,
     imageUrlForMessage,
     setPendingPrompt,

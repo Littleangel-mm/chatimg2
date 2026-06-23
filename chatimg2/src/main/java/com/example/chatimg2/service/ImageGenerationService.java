@@ -64,6 +64,13 @@ public class ImageGenerationService {
         if (!record.getKeyId().equals(key.getId())) {
             throw new RuntimeException("无权查看此记录");
         }
+        if ("processing".equals(record.getStatus())
+                && record.getImagePath() != null
+                && !record.getImagePath().isBlank()) {
+            record.setStatus("completed");
+            record.setErrorMessage(null);
+            record = recordRepository.save(record);
+        }
         return record;
     }
 

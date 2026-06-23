@@ -99,9 +99,23 @@ public class ImageBackupService {
                 return;
             }
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            if (isTempIntermediateFile(source)) {
+                Files.deleteIfExists(source);
+                log.debug("Removed temp image {}", source.getFileName());
+            }
         } catch (IOException e) {
             throw new RuntimeException("复制图片失败: " + e.getMessage(), e);
         }
+    }
+
+    private boolean isTempIntermediateFile(Path source) {
+        if (source == null || source.getFileName() == null) {
+            return false;
+        }
+        String name = source.getFileName().toString();
+        return name.matches("[0-9a-fA-F\\-]{36}\\.png")
+                && source.getParent() != null
+                && source.getParent().equals(storageConfig.getBackupDir());
     }
 
     private Path targetPath(String taskCode) {

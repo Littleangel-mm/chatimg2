@@ -9,8 +9,16 @@ const props = defineProps({
 const convStore = useConversationsStore()
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
-const isProcessing = computed(() => props.message.status === 'processing')
-const isFailed = computed(() => props.message.status === 'failed')
+const isProcessing = computed(() => {
+  const status = (props.message.record?.status || props.message.status || '').toLowerCase()
+  if (status === 'completed' || status === 'failed') return false
+  if (props.message.record?.imagePath) return false
+  return status === 'processing' || !status
+})
+const isFailed = computed(() => {
+  const status = (props.message.record?.status || props.message.status || '').toLowerCase()
+  return status === 'failed'
+})
 </script>
 
 <template>

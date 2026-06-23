@@ -6,6 +6,18 @@ import { useConversationsStore } from './conversations'
 const CACHE_KEY = 'userCache'
 const POLL_INTERVAL_MS = 4000
 const POLL_MAX_ATTEMPTS = 180
+const activePolls = new Set()
+
+function normalizeStatus(status) {
+  return (status || '').toLowerCase()
+}
+
+function resolveRecordStatus(record) {
+  const status = normalizeStatus(record?.status)
+  if (status === 'completed' || status === 'failed') return status
+  if (record?.imagePath && status === 'processing') return 'completed'
+  return status || 'processing'
+}
 
 function readCache() {
   try {
@@ -120,9 +132,11 @@ export const useUserStore = defineStore('user', () => {
         const convStore = useConversationsStore()
         convStore.bindKeyCode(keyCode.value)
         convStore.importFromHistory(history.value, keyCode.value)
+        convStore.syncFromHistoryRecords(history.value)
       } catch {
         /* ignore */
       }
+      resumePendingGenerations().catch(() => {})
     }
   }
 
@@ -171,32 +185,95 @@ export const useUserStore = defineStore('user', () => {
     }
     syncCreditsFromServer()
       .then(ok => {
-        if (ok) fetchHistory().catch(() => {})
+        if (ok) {
+          fetchHistory()
+            .then(() => resumePendingGenerations())
+            .catch(() => {})
+        }
       })
       .catch(() => {})
   }
 
-  async function pollRecordStatus(recordId) {
-    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
-      await sleep(POLL_INTERVAL_MS)
-      const { data } = await api.get(`/user/generate/${recordId}`, {
-        params: { keyCode: keyCode.value }
-      })
-      if (data.code !== 200) throw new Error(data.message)
-
-      const record = data.data
-      upsertHistoryRecord(record)
-
-      if (record.status === 'completed') {
-        await syncCreditsFromServer()
-        return record
+  function collectPendingRecordIds() {
+    const ids = new Set()
+    try {
+      const convStore = useConversationsStore()
+      for (const conv of convStore.conversations) {
+        for (const msg of conv.messages) {
+          if (msg.role !== 'assistant') continue
+          const status = resolveRecordStatus(msg.record || { status: msg.status })
+          if (status !== 'processing') continue
+          const id = msg.recordId || msg.record?.id
+          if (id != null) ids.add(Number(id))
+        }
       }
-      if (record.status === 'failed') {
-        await syncCreditsFromServer()
-        throw new Error(record.errorMessage || '生成失败')
+    } catch {
+      /* store may not be ready */
+    }
+    for (const item of history.value) {
+      if (resolveRecordStatus(item) === 'processing' && item.id != null) {
+        ids.add(Number(item.id))
       }
     }
-    throw new Error('生图超时，请刷新页面查看历史')
+    return [...ids]
+  }
+
+  async function pollRecordStatus(recordId) {
+    const normalizedId = Number(recordId)
+    if (activePolls.has(normalizedId)) {
+      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+        await sleep(POLL_INTERVAL_MS)
+        const cached = history.value.find(item => Number(item.id) === normalizedId)
+        const status = resolveRecordStatus(cached)
+        if (status === 'completed') return cached
+        if (status === 'failed') throw new Error(cached?.errorMessage || '生成失败')
+      }
+      throw new Error('生图超时，请刷新页面查看历史')
+    }
+
+    activePolls.add(normalizedId)
+    try {
+      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+        await sleep(POLL_INTERVAL_MS)
+        const { data } = await api.get(`/user/generate/${normalizedId}`, {
+          params: { keyCode: keyCode.value }
+        })
+        if (data.code !== 200) throw new Error(data.message)
+
+        const record = data.data
+        upsertHistoryRecord(record)
+
+        const status = resolveRecordStatus(record)
+        if (status === 'completed') {
+          await syncCreditsFromServer()
+          return record
+        }
+        if (status === 'failed') {
+          await syncCreditsFromServer()
+          throw new Error(record.errorMessage || '生成失败')
+        }
+      }
+      throw new Error('生图超时，请刷新页面查看历史')
+    } finally {
+      activePolls.delete(normalizedId)
+    }
+  }
+
+  async function resumePendingGenerations() {
+    if (!keyCode.value) return
+    const pendingIds = collectPendingRecordIds()
+    if (!pendingIds.length) return
+    await Promise.allSettled(
+      pendingIds.map(id =>
+        pollRecordStatus(id).catch(err => {
+          try {
+            useConversationsStore().failAssistantForRecord(id, err.message)
+          } catch {
+            /* ignore */
+          }
+        })
+      )
+    )
   }
 
   async function generate({ prompt, type, sourceImage, model }) {
@@ -214,7 +291,7 @@ export const useUserStore = defineStore('user', () => {
       upsertHistoryRecord(data.data)
       await syncCreditsFromServer()
 
-      if (data.data.status === 'completed') {
+      if (resolveRecordStatus(data.data) === 'completed') {
         return data.data
       }
 
@@ -250,6 +327,6 @@ export const useUserStore = defineStore('user', () => {
     activating, generating, refreshing, syncingCredits,
     remainingCredits, isActivated, isBusy,
     activate, fetchHistory, refreshSession, initSession,
-    syncCreditsFromServer, generate, logout, hydrateFromCache
+    syncCreditsFromServer, generate, resumePendingGenerations, logout, hydrateFromCache
   }
 })

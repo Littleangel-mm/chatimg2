@@ -165,7 +165,12 @@ function applyPendingPrompt() {
   })
 }
 
-onMounted(applyPendingPrompt)
+onMounted(() => {
+  applyPendingPrompt()
+  if (userStore.isActivated) {
+    userStore.resumePendingGenerations().catch(() => {})
+  }
+})
 onActivated(applyPendingPrompt)
 </script>
 
