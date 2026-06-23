@@ -75,6 +75,13 @@ function imageUrl(item) {
   return getInspirationImageUrl(item)
 }
 
+function isVideoItem(item) {
+  if (!item) return false
+  if (item.mediaType === 'video') return true
+  const url = item.imageUrl || item.sourceUrl || ''
+  return /\.(mp4|webm|mov)(\?|$)/i.test(url)
+}
+
 function onScroll() {
   const el = scrollEl.value
   if (!el) return
@@ -149,7 +156,15 @@ function goHome() {
             class="insp-card"
             @click="selected = item"
           >
-            <img :src="imageUrl(item)" :alt="item.prompt" loading="lazy" />
+            <img v-if="!isVideoItem(item)" :src="imageUrl(item)" :alt="item.prompt" loading="lazy" />
+            <video
+              v-else
+              :src="imageUrl(item)"
+              muted
+              loop
+              playsinline
+              preload="metadata"
+            />
             <figcaption class="insp-card-overlay">
               <p class="insp-card-prompt">{{ item.prompt }}</p>
               <button class="insp-card-btn" @click.stop="usePrompt(item.prompt)">
@@ -179,7 +194,16 @@ function goHome() {
         <div class="insp-detail">
           <button class="detail-close" @click="selected = null">✕</button>
           <div class="insp-detail-img">
-            <img :src="imageUrl(selected)" :alt="selected.prompt" />
+            <img v-if="!isVideoItem(selected)" :src="imageUrl(selected)" :alt="selected.prompt" />
+            <video
+              v-else
+              :src="imageUrl(selected)"
+              controls
+              autoplay
+              loop
+              playsinline
+              preload="metadata"
+            />
           </div>
           <div class="insp-detail-info">
             <h3>提示词 Prompt</h3>
@@ -326,13 +350,15 @@ function goHome() {
   transform: translateY(-2px);
 }
 
-.insp-card img {
+.insp-card img,
+.insp-card video {
   width: 100%;
   display: block;
   transition: transform 0.25s;
 }
 
-.insp-card:hover img {
+.insp-card:hover img,
+.insp-card:hover video {
   transform: scale(1.03);
 }
 
@@ -455,7 +481,8 @@ function goHome() {
   justify-content: center;
 }
 
-.insp-detail-img img {
+.insp-detail-img img,
+.insp-detail-img video {
   width: 100%;
   height: 100%;
   object-fit: contain;

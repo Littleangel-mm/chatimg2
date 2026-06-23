@@ -30,7 +30,15 @@ export function getInspirationImageUrl(item) {
   if (!item) return ''
   const path = item.imageUrl || item.sourceUrl || ''
   if (!path) return ''
-  if (path.startsWith('http://') || path.startsWith('https://')) return path
-  if (path.startsWith('/')) return path
-  return `${IMAGE_BASE_PATH}${path}`
+  let url = path
+  if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/')) {
+    url = `${IMAGE_BASE_PATH}${path}`
+  } else if (!url.startsWith('http://') && !url.startsWith('https://') && url.startsWith('/')) {
+    url = path
+  }
+  if (item.updatedAt) {
+    const v = encodeURIComponent(String(item.updatedAt))
+    url += (url.includes('?') ? '&' : '?') + `_v=${v}`
+  }
+  return url
 }

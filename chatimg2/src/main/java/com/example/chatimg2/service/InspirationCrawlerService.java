@@ -151,7 +151,6 @@ public class InspirationCrawlerService {
                 String prompt = text(item, "prompt");
                 String remoteUrl = text(item, "imageUrl");
                 if (prompt == null || prompt.isBlank()) {
-                    indexInPage++;
                     continue;
                 }
 
@@ -239,15 +238,9 @@ public class InspirationCrawlerService {
             Files.createDirectories(dir);
 
             String ext = extractExtension(remoteUrl);
-            String baseName = (externalId != null && !externalId.isBlank())
-                    ? externalId
-                    : Integer.toHexString(remoteUrl.hashCode());
+            String baseName = resolveBaseName(externalId, remoteUrl);
             String fileName = mediaType + "_" + baseName + ext;
             Path target = dir.resolve(fileName);
-
-            if (Files.exists(target) && Files.size(target) > 0) {
-                return "inspiration/" + fileName;
-            }
 
             Request request = new Request.Builder()
                     .url(remoteUrl)
@@ -268,6 +261,13 @@ public class InspirationCrawlerService {
             log.warn("Download inspiration image error {}: {}", remoteUrl, e.getMessage());
             return null;
         }
+    }
+
+    private static String resolveBaseName(String externalId, String remoteUrl) {
+        if (externalId != null && !externalId.isBlank()) {
+            return externalId;
+        }
+        return Integer.toUnsignedString(remoteUrl.hashCode(), 36);
     }
 
     private OkHttpClient client() {
