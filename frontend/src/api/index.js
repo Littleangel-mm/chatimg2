@@ -24,3 +24,13 @@ export function getImageUrl(record) {
   if (path.startsWith('/')) return path
   return `${IMAGE_BASE_PATH}${path}`
 }
+
+/** 灵感画廊图片地址：本地相对路径拼 /img/，远程 URL 直接使用 */
+export function getInspirationImageUrl(item) {
+  if (!item) return ''
+  const path = item.imageUrl || item.sourceUrl || ''
+  if (!path) return ''
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  if (path.startsWith('/')) return path
+  return `${IMAGE_BASE_PATH}${path}`
+}

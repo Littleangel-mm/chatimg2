@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import { compressImage } from '../../utils/image'
@@ -148,6 +148,30 @@ function onKeydown(e) {
     if (!userStore.generating) send()
   }
 }
+
+function onUseInspirationPrompt(e) {
+  const text = e.detail?.prompt
+  if (!text) return
+  let conv = conversation()
+  if (!conv || conv.type !== 'text2img') {
+    conv = convStore.createConversation('text2img')
+  }
+  error.value = ''
+  prompt.value = text
+  nextTick(() => {
+    resizePrompt()
+    promptEl.value?.focus()
+    scrollToBottom()
+  })
+}
+
+onMounted(() => {
+  window.addEventListener('use-inspiration-prompt', onUseInspirationPrompt)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('use-inspiration-prompt', onUseInspirationPrompt)
+})
 </script>
 
 <template>

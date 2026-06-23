@@ -118,8 +118,23 @@ export const useAdminStore = defineStore('admin', () => {
     await fetchKeys(nextPage)
   }
 
+  async function crawlInspiration(mediaType) {
+    const { data } = await api.post('/admin/inspiration/crawl', null, {
+      params: mediaType ? { mediaType } : {}
+    })
+    if (data.code !== 200) throw new Error(data.message)
+    return data.data
+  }
+
+  async function inspirationStatus() {
+    const { data } = await api.get('/admin/inspiration/status')
+    if (data.code !== 200) throw new Error(data.message)
+    return data.data
+  }
+
   return {
     admin, keys, loading, tableLoading, page, size, total, totalPages,
-    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits
+    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits,
+    crawlInspiration, inspirationStatus
   }
 })

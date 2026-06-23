@@ -16,6 +16,11 @@ function newChat(type) {
   emit('close-mobile')
 }
 
+function openInspiration() {
+  window.dispatchEvent(new CustomEvent('open-inspiration'))
+  emit('close-mobile')
+}
+
 function select(id) {
   convStore.selectConversation(id)
   emit('close-mobile')
@@ -47,6 +52,10 @@ function remove(id) {
       <button class="new-btn secondary" @click="newChat('img2img')">
         <span class="icon">🖼</span>
         新图生图
+      </button>
+      <button class="new-btn gallery" @click="openInspiration">
+        <span class="icon">🎨</span>
+        灵感画廊
       </button>
     </div>
 
@@ -155,6 +164,16 @@ function remove(id) {
 
 .new-btn.secondary {
   background: transparent;
+}
+
+.new-btn.gallery {
+  background: transparent;
+  border-color: rgba(124, 92, 255, 0.3);
+  color: #b49cff;
+}
+
+.new-btn.gallery:hover {
+  background: rgba(124, 92, 255, 0.12);
 }
 
 .new-btn .icon {

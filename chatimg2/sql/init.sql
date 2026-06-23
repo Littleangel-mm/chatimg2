@@ -36,10 +36,26 @@ CREATE TABLE IF NOT EXISTS generation_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 灵感画廊 prompt 库（爬取自外部站点，前端展示 + 一键复用）
+CREATE TABLE IF NOT EXISTS inspiration_prompts (
+    id SERIAL PRIMARY KEY,
+    external_id VARCHAR(64) UNIQUE,             -- 来源站点唯一 id，用于去重
+    media_type VARCHAR(16) NOT NULL DEFAULT 'image', -- image / video
+    category VARCHAR(100),
+    subcategory VARCHAR(100),
+    image_url VARCHAR(1000),                    -- 本地相对路径(inspiration/xxx.webp)或远程 URL
+    source_url VARCHAR(1000),                   -- 原始远程图片地址
+    prompt TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,               -- 保持来源顺序
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_generation_records_key_id ON generation_records(key_id);
 CREATE INDEX IF NOT EXISTS idx_generation_records_task_code ON generation_records(task_code);
 CREATE INDEX IF NOT EXISTS idx_activation_keys_key_code ON activation_keys(key_code);
+CREATE INDEX IF NOT EXISTS idx_inspiration_media_type ON inspiration_prompts(media_type);
 
 -- 默认管理员 (密码: admin123, SHA256加密)
 INSERT INTO admins (username, password)

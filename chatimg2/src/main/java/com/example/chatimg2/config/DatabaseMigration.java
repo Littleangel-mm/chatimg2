@@ -53,7 +53,25 @@ public final class DatabaseMigration {
                     SET image_url = regexp_replace(image_url, '^.*/', '')
                     WHERE image_url IS NOT NULL AND image_url LIKE '%/%'
                     """);
-            log.info("Database migration completed (generation_records.status, error_message, task_code, image_path)");
+
+            // 灵感画廊 prompt 库（ddl-auto=validate 不会自动建表，这里显式创建）
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS inspiration_prompts (
+                        id SERIAL PRIMARY KEY,
+                        external_id VARCHAR(64) UNIQUE,
+                        media_type VARCHAR(16) NOT NULL DEFAULT 'image',
+                        category VARCHAR(100),
+                        subcategory VARCHAR(100),
+                        image_url VARCHAR(1000),
+                        source_url VARCHAR(1000),
+                        prompt TEXT NOT NULL,
+                        sort_order INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_inspiration_media_type ON inspiration_prompts(media_type)");
+            log.info("Database migration completed (generation_records.*, inspiration_prompts)");
         } catch (SQLException e) {
             throw new IllegalStateException("Database migration failed: " + e.getMessage(), e);
         }

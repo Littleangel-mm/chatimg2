@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onActivated, defineOptions } from 'vue'
+import { ref, computed, onMounted, onActivated, onUnmounted, defineOptions } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAdminStore } from '../../stores/admin'
 
@@ -19,6 +19,44 @@ const initialLoad = ref(true)
 const pageDisplay = computed(() => adminStore.page + 1)
 const showSkeleton = computed(() => initialLoad.value && adminStore.keys.length === 0)
 
+const crawlType = ref('')
+const crawling = ref(false)
+const inspStats = ref(null)
+let statusTimer = null
+
+async function refreshInspStatus() {
+  try {
+    const data = await adminStore.inspirationStatus()
+    inspStats.value = data
+    if (data.running) {
+      crawling.value = true
+      if (!statusTimer) statusTimer = setInterval(refreshInspStatus, 3000)
+    } else {
+      crawling.value = false
+      if (statusTimer) {
+        clearInterval(statusTimer)
+        statusTimer = null
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function startCrawl() {
+  error.value = ''
+  try {
+    await adminStore.crawlInspiration(crawlType.value || undefined)
+    message.value = '爬取任务已开始，完成后数量会自动更新'
+    setTimeout(() => (message.value = ''), 4000)
+    crawling.value = true
+    refreshInspStatus()
+    if (!statusTimer) statusTimer = setInterval(refreshInspStatus, 3000)
+  } catch (e) {
+    error.value = e.response?.data?.message || e.message
+  }
+}
+
 async function loadKeys(p = adminStore.page, background = false) {
   try {
     await adminStore.fetchKeys(p, { background })
@@ -29,8 +67,14 @@ async function loadKeys(p = adminStore.page, background = false) {
   }
 }
 
-onMounted(() => loadKeys(0, !!adminStore.keys.length))
+onMounted(() => {
+  loadKeys(0, !!adminStore.keys.length)
+  refreshInspStatus()
+})
 onActivated(() => loadKeys(adminStore.page, true))
+onUnmounted(() => {
+  if (statusTimer) clearInterval(statusTimer)
+})
 
 function logout() {
   adminStore.logout()
@@ -133,6 +177,30 @@ function goPage(p) {
             <input v-model.number="newCredits" type="number" min="1" placeholder="积分" class="input input-sm" />
             <button class="btn-primary tap" :disabled="creating" @click="addKey">
               {{ creating ? '生成中...' : '+ 添加密钥' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="add-card card">
+        <div class="add-row">
+          <div>
+            <h3>灵感画廊</h3>
+            <p class="add-desc">
+              爬取外部 prompt 库到本地
+              <span v-if="inspStats?.stats">
+                · 当前：图片 {{ inspStats.stats.image }} · 视频 {{ inspStats.stats.video }}
+              </span>
+            </p>
+          </div>
+          <div class="add-form">
+            <select v-model="crawlType" class="input input-sm">
+              <option value="">全部</option>
+              <option value="image">仅图片</option>
+              <option value="video">仅视频</option>
+            </select>
+            <button class="btn-primary tap" :disabled="crawling" @click="startCrawl">
+              {{ crawling ? '爬取中...' : '爬取更新' }}
             </button>
           </div>
         </div>
