@@ -35,6 +35,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   const activeId = ref(null)
   const sidebarOpen = ref(true)
   const boundKeyCode = ref('')
+  const pendingPrompt = ref('')
 
   const activeConversation = computed(() =>
     conversations.value.find(c => c.id === activeId.value) ?? null
@@ -236,10 +237,21 @@ export const useConversationsStore = defineStore('conversations', () => {
     return getImageUrl(msg.record)
   }
 
+  function setPendingPrompt(text) {
+    pendingPrompt.value = text || ''
+  }
+
+  function consumePendingPrompt() {
+    const text = pendingPrompt.value
+    pendingPrompt.value = ''
+    return text
+  }
+
   return {
     conversations,
     activeId,
     sidebarOpen,
+    pendingPrompt,
     activeConversation,
     sortedConversations,
     bindKeyCode,
@@ -253,6 +265,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     syncRecord,
     failLatestAssistant,
     importFromHistory,
-    imageUrlForMessage
+    imageUrlForMessage,
+    setPendingPrompt,
+    consumePendingPrompt
   }
 })

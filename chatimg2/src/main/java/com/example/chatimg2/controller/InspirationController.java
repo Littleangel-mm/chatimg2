@@ -36,6 +36,12 @@ public class InspirationController {
         return ApiResponse.success(inspirationService.getCategories(mediaType));
     }
 
+    /** 用户端：元信息（数据量 + 版本号，供前端检测是否需要刷新） */
+    @GetMapping("/inspiration/meta")
+    public ApiResponse<Map<String, Object>> meta() {
+        return ApiResponse.success(inspirationService.meta());
+    }
+
     /** 管理端：触发爬取（异步执行） */
     @PostMapping("/admin/inspiration/crawl")
     public ApiResponse<Map<String, Object>> crawl(@RequestParam(required = false) String mediaType) {

@@ -6,7 +6,6 @@ import { useConversationsStore } from '../stores/conversations'
 import ChatSidebar from '../components/chat/ChatSidebar.vue'
 import ChatMain from '../components/chat/ChatMain.vue'
 import KeyModal from '../components/KeyModal.vue'
-import InspirationModal from '../components/InspirationModal.vue'
 
 defineOptions({ name: 'home' })
 
@@ -35,7 +34,6 @@ onMounted(() => {
 
     <ChatMain @open-sidebar="mobileSidebar = true" />
     <KeyModal />
-    <InspirationModal />
   </div>
 </template>
 

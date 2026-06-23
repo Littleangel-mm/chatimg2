@@ -125,7 +125,11 @@ public class InspirationCrawlerService {
         int created = 0, updated = 0, downloaded = 0, failed = 0, page = 1;
         boolean hasMore = true;
 
-        log.info("Inspiration crawl start: mediaType={}", type);
+        log.info("Inspiration crawl start: mediaType={}, proxyEnabled={}, proxy={}:{}",
+                type, proxyEnabled, proxyHost, proxyPort);
+        if (!proxyEnabled) {
+            log.warn("代理未启用（INSPIRATION_PROXY_ENABLED=false）。若本机无法直连 img2.ai，请在 .env 开启代理并重启应用。");
+        }
         while (hasMore && page <= maxPages) {
             JsonNode data;
             try {

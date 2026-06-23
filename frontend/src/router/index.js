@@ -18,6 +18,12 @@ const router = createRouter({
       meta: { keepAlive: true }
     },
     {
+      path: '/inspiration',
+      name: 'inspiration',
+      component: routeChunks.inspiration,
+      meta: { keepAlive: true }
+    },
+    {
       path: '/admin',
       name: 'admin-login',
       component: routeChunks['admin-login']

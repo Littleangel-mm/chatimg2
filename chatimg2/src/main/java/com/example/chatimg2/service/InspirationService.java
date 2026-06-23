@@ -10,6 +10,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
+import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,5 +57,15 @@ public class InspirationService {
         stats.put("video", video);
         stats.put("total", image + video);
         return stats;
+    }
+
+    /** 轻量元信息：供前端检测数据是否更新（version = 最新 updatedAt 的毫秒值） */
+    public Map<String, Object> meta() {
+        Map<String, Object> meta = stats();
+        long version = repository.findMaxUpdatedAt()
+                .map(t -> t.toInstant(ZoneOffset.UTC).toEpochMilli())
+                .orElse(0L);
+        meta.put("version", version);
+        return meta;
     }
 }

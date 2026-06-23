@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onActivated } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import { compressImage } from '../../utils/image'
@@ -149,8 +149,8 @@ function onKeydown(e) {
   }
 }
 
-function onUseInspirationPrompt(e) {
-  const text = e.detail?.prompt
+function applyPendingPrompt() {
+  const text = convStore.consumePendingPrompt()
   if (!text) return
   let conv = conversation()
   if (!conv || conv.type !== 'text2img') {
@@ -165,13 +165,8 @@ function onUseInspirationPrompt(e) {
   })
 }
 
-onMounted(() => {
-  window.addEventListener('use-inspiration-prompt', onUseInspirationPrompt)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('use-inspiration-prompt', onUseInspirationPrompt)
-})
+onMounted(applyPendingPrompt)
+onActivated(applyPendingPrompt)
 </script>
 
 <template>

@@ -12,6 +12,7 @@ export const useInspirationStore = defineStore('inspiration', () => {
   const loading = ref(false)
   const loaded = ref(false)
   const error = ref('')
+  const version = ref(0)
 
   const hasMore = computed(() => page.value + 1 < totalPages.value)
 
@@ -38,9 +39,34 @@ export const useInspirationStore = defineStore('inspiration', () => {
     }
   }
 
+  async function fetchMeta() {
+    try {
+      const { data } = await api.get('/inspiration/meta')
+      if (data.code === 200) return data.data
+    } catch {
+      /* ignore */
+    }
+    return null
+  }
+
   async function ensureLoaded() {
     if (loaded.value || loading.value) return
     await fetchPage(0).catch(() => {})
+    const meta = await fetchMeta()
+    if (meta) version.value = meta.version
+  }
+
+  /** 检测后端数据是否有更新（定时爬取后），有则刷新当前 tab 第一页 */
+  async function checkForUpdates() {
+    if (loading.value) return false
+    const meta = await fetchMeta()
+    if (!meta) return false
+    if (meta.version && meta.version !== version.value) {
+      version.value = meta.version
+      await fetchPage(0).catch(() => {})
+      return true
+    }
+    return false
   }
 
   function setMediaType(type) {
@@ -59,7 +85,7 @@ export const useInspirationStore = defineStore('inspiration', () => {
   }
 
   return {
-    items, mediaType, page, size, total, totalPages, loading, loaded, error,
-    hasMore, fetchPage, ensureLoaded, setMediaType, loadMore
+    items, mediaType, page, size, total, totalPages, loading, loaded, error, version,
+    hasMore, fetchPage, fetchMeta, ensureLoaded, checkForUpdates, setMediaType, loadMore
   }
 })

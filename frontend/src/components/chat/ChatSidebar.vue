@@ -1,9 +1,11 @@
 <script setup>
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import ConversationMenu from './ConversationMenu.vue'
 
+const router = useRouter()
 const convStore = useConversationsStore()
 const userStore = useUserStore()
 
@@ -17,7 +19,7 @@ function newChat(type) {
 }
 
 function openInspiration() {
-  window.dispatchEvent(new CustomEvent('open-inspiration'))
+  router.push('/inspiration')
   emit('close-mobile')
 }
 

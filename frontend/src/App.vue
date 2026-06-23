@@ -48,7 +48,7 @@ onUnmounted(() => {
     <div class="nav-bar" :class="{ active: navigating }" />
     <AppHeader v-if="showHeader" />
     <router-view v-slot="{ Component, route: r }">
-      <keep-alive :include="['home', 'admin-keys']">
+      <keep-alive :include="['home', 'inspiration', 'admin-keys']">
         <component v-if="Component" :is="Component" :key="r.name" class="page-view" />
       </keep-alive>
       <div v-if="!Component" class="page-loading">加载中...</div>

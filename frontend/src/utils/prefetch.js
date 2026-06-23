@@ -2,6 +2,7 @@ const prefetched = new Set()
 
 export const routeChunks = {
   home: () => import('../views/HomeView.vue'),
+  inspiration: () => import('../views/InspirationView.vue'),
   'admin-login': () => import('../views/admin/AdminLogin.vue'),
   'admin-keys': () => import('../views/admin/AdminKeys.vue')
 }
