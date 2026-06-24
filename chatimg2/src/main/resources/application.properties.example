@@ -1,6 +1,7 @@
 spring.application.name=chatimg2
 
 # PostgreSQL (tcpKeepAlive 防止生图等待期间连接被防火墙断开)
+# 敏感项通过 src/env/.env 或环境变量注入，参见 .env.example
 spring.datasource.url=jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:chatimg2}?tcpKeepAlive=true&connectTimeout=10&socketTimeout=120&ApplicationName=chatimg2
 spring.datasource.username=${DB_USER:postgres}
 spring.datasource.password=${DB_PASSWORD:}
