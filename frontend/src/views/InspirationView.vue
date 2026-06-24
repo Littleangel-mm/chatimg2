@@ -3,7 +3,7 @@ import { ref, onMounted, onActivated, onDeactivated, onUnmounted, nextTick, defi
 import { useRouter } from 'vue-router'
 import { useInspirationStore } from '../stores/inspiration'
 import { useConversationsStore } from '../stores/conversations'
-import { getInspirationImageUrl } from '../api'
+import { getInspirationImageUrl, getInspirationFallbackUrl } from '../api'
 
 defineOptions({ name: 'inspiration' })
 
@@ -15,6 +15,7 @@ const selected = ref(null)
 const copied = ref(false)
 const scrollEl = ref(null)
 const refreshed = ref(false)
+const mediaFallback = ref({})
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000
 let pollTimer = null
@@ -72,7 +73,14 @@ function switchTab(type) {
 }
 
 function imageUrl(item) {
-  return getInspirationImageUrl(item)
+  return mediaFallback.value[item.id] || getInspirationImageUrl(item)
+}
+
+function onMediaError(item) {
+  const fallback = getInspirationFallbackUrl(item)
+  if (fallback && mediaFallback.value[item.id] !== fallback) {
+    mediaFallback.value = { ...mediaFallback.value, [item.id]: fallback }
+  }
 }
 
 function isVideoItem(item) {
@@ -156,7 +164,13 @@ function goHome() {
             class="insp-card"
             @click="selected = item"
           >
-            <img v-if="!isVideoItem(item)" :src="imageUrl(item)" :alt="item.prompt" loading="lazy" />
+            <img
+              v-if="!isVideoItem(item)"
+              :src="imageUrl(item)"
+              :alt="item.prompt"
+              loading="lazy"
+              @error="onMediaError(item)"
+            />
             <video
               v-else
               :src="imageUrl(item)"
@@ -164,6 +178,7 @@ function goHome() {
               loop
               playsinline
               preload="metadata"
+              @error="onMediaError(item)"
             />
             <figcaption class="insp-card-overlay">
               <p class="insp-card-prompt">{{ item.prompt }}</p>
@@ -194,7 +209,12 @@ function goHome() {
         <div class="insp-detail">
           <button class="detail-close" @click="selected = null">✕</button>
           <div class="insp-detail-img">
-            <img v-if="!isVideoItem(selected)" :src="imageUrl(selected)" :alt="selected.prompt" />
+            <img
+              v-if="!isVideoItem(selected)"
+              :src="imageUrl(selected)"
+              :alt="selected.prompt"
+              @error="onMediaError(selected)"
+            />
             <video
               v-else
               :src="imageUrl(selected)"
@@ -203,6 +223,7 @@ function goHome() {
               loop
               playsinline
               preload="metadata"
+              @error="onMediaError(selected)"
             />
           </div>
           <div class="insp-detail-info">

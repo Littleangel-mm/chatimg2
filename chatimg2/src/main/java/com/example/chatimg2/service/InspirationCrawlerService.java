@@ -177,6 +177,7 @@ public class InspirationCrawlerService {
                         downloaded++;
                     } else {
                         failed++;
+                        localOrRemote = remoteUrl;
                     }
                 }
                 entity.setImageUrl(localOrRemote);

@@ -26,6 +26,12 @@ export function getImageUrl(record) {
 }
 
 /** 灵感画廊图片地址：本地相对路径拼 /img/，远程 URL 直接使用 */
+function appendCacheBust(url, updatedAt) {
+  if (!url || !updatedAt) return url
+  const v = encodeURIComponent(String(updatedAt))
+  return url + (url.includes('?') ? '&' : '?') + `_v=${v}`
+}
+
 export function getInspirationImageUrl(item) {
   if (!item) return ''
   const path = item.imageUrl || item.sourceUrl || ''
@@ -33,12 +39,15 @@ export function getInspirationImageUrl(item) {
   let url = path
   if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/')) {
     url = `${IMAGE_BASE_PATH}${path}`
-  } else if (!url.startsWith('http://') && !url.startsWith('https://') && url.startsWith('/')) {
-    url = path
   }
-  if (item.updatedAt) {
-    const v = encodeURIComponent(String(item.updatedAt))
-    url += (url.includes('?') ? '&' : '?') + `_v=${v}`
-  }
-  return url
+  return appendCacheBust(url, item.updatedAt)
+}
+
+/** 本地 /img/ 加载失败时回退到远程 sourceUrl */
+export function getInspirationFallbackUrl(item) {
+  if (!item?.sourceUrl) return ''
+  const primary = item.imageUrl || ''
+  if (!primary || primary.startsWith('http://') || primary.startsWith('https://')) return ''
+  if (primary === item.sourceUrl) return ''
+  return appendCacheBust(item.sourceUrl, item.updatedAt)
 }
