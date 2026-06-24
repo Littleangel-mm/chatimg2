@@ -43,11 +43,11 @@ export function getInspirationImageUrl(item) {
   return appendCacheBust(url, item.updatedAt)
 }
 
-/** 本地 /img/ 加载失败时回退到远程 sourceUrl */
+/** 本地 /img/ 或媒体代理失败时回退到远程 sourceUrl */
 export function getInspirationFallbackUrl(item) {
   if (!item?.sourceUrl) return ''
   const primary = item.imageUrl || ''
-  if (!primary || primary.startsWith('http://') || primary.startsWith('https://')) return ''
   if (primary === item.sourceUrl) return ''
+  if (primary.startsWith('http://') || primary.startsWith('https://')) return ''
   return appendCacheBust(item.sourceUrl, item.updatedAt)
 }

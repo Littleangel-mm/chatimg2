@@ -4,9 +4,14 @@ import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.PageResult;
 import com.example.chatimg2.entity.InspirationPrompt;
 import com.example.chatimg2.service.InspirationCrawlerService;
+import com.example.chatimg2.service.InspirationMediaService;
 import com.example.chatimg2.service.InspirationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 
 import java.util.HashMap;
 import java.util.List;
@@ -19,6 +24,7 @@ public class InspirationController {
 
     private final InspirationService inspirationService;
     private final InspirationCrawlerService crawlerService;
+    private final InspirationMediaService mediaService;
 
     /** 用户端：灵感画廊分页列表 */
     @GetMapping("/inspiration")
@@ -40,6 +46,15 @@ public class InspirationController {
     @GetMapping("/inspiration/meta")
     public ApiResponse<Map<String, Object>> meta() {
         return ApiResponse.success(inspirationService.meta());
+    }
+
+    /** 用户端：灵感视频/媒体流（支持 Range，本地缺失时代理远程） */
+    @GetMapping("/inspiration/media/{id}")
+    public void media(
+            @PathVariable Integer id,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        mediaService.streamMedia(id, request, response);
     }
 
     /** 管理端：触发爬取（异步执行） */

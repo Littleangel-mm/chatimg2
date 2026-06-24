@@ -162,6 +162,7 @@ function goHome() {
             v-for="item in store.items"
             :key="item.id"
             class="insp-card"
+            :class="{ 'insp-card--video': isVideoItem(item) }"
             @click="selected = item"
           >
             <img
@@ -176,8 +177,9 @@ function goHome() {
               :src="imageUrl(item)"
               muted
               loop
+              autoplay
               playsinline
-              preload="metadata"
+              preload="auto"
               @error="onMediaError(item)"
             />
             <figcaption class="insp-card-overlay">
@@ -371,11 +373,23 @@ function goHome() {
   transform: translateY(-2px);
 }
 
+.insp-card--video {
+  aspect-ratio: 16 / 9;
+  min-height: 140px;
+}
+
 .insp-card img,
 .insp-card video {
   width: 100%;
   display: block;
   transition: transform 0.25s;
+}
+
+.insp-card video {
+  aspect-ratio: 16 / 9;
+  min-height: 140px;
+  object-fit: cover;
+  background: #2a2020;
 }
 
 .insp-card:hover img,

@@ -25,6 +25,7 @@ public class InspirationService {
 
     private final InspirationPromptRepository repository;
     private final ImageStorageConfig storageConfig;
+    private final InspirationMediaService mediaService;
 
     private static final int MAX_PAGE_SIZE = 60;
 
@@ -49,19 +50,30 @@ public class InspirationService {
         return pageResult;
     }
 
-    /** 本地文件缺失时回退到 sourceUrl，避免前端只显示提示词 */
+    /** 视频：本地有文件走同源接口；无本地文件则返回远程 URL，由浏览器直连 */
     private InspirationPrompt forResponse(InspirationPrompt src) {
+        if ("video".equals(src.getMediaType())) {
+            InspirationPrompt out = copyPrompt(src);
+            out.setImageUrl(mediaService.resolveVideoDisplayUrl(src));
+            return out;
+        }
         String resolved = resolveDisplayUrl(src.getImageUrl(), src.getSourceUrl());
         if (Objects.equals(resolved, src.getImageUrl())) {
             return src;
         }
+        InspirationPrompt out = copyPrompt(src);
+        out.setImageUrl(resolved);
+        return out;
+    }
+
+    private InspirationPrompt copyPrompt(InspirationPrompt src) {
         InspirationPrompt out = new InspirationPrompt();
         out.setId(src.getId());
         out.setExternalId(src.getExternalId());
         out.setMediaType(src.getMediaType());
         out.setCategory(src.getCategory());
         out.setSubcategory(src.getSubcategory());
-        out.setImageUrl(resolved);
+        out.setImageUrl(src.getImageUrl());
         out.setSourceUrl(src.getSourceUrl());
         out.setPrompt(src.getPrompt());
         out.setSortOrder(src.getSortOrder());
