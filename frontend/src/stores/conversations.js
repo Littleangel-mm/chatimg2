@@ -27,8 +27,18 @@ function recordIdEquals(a, b) {
 function resolveRecordStatus(record) {
   const status = (record?.status || '').toLowerCase()
   if (status === 'completed' || status === 'failed') return status
-  if (record?.imagePath && status === 'processing') return 'completed'
+  if (record?.imagePath) return 'completed'
   return status || 'processing'
+}
+
+function recordCreatedTime(record) {
+  const time = new Date(record?.createdAt || 0).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function recordMatchesConversation(record, conv) {
+  const type = record?.generationType === 'img2img' ? 'img2img' : 'text2img'
+  return type === (conv?.type || 'text2img')
 }
 
 function uid() {
@@ -193,6 +203,26 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (changed) persist()
   }
 
+  function attachRecordToMessage(messageId, record) {
+    if (!messageId || !record?.id) return false
+
+    const conv = conversations.value.find(c =>
+      c.messages.some(m => m.id === messageId)
+    )
+    if (!conv) return false
+
+    const msg = conv.messages.find(m => m.id === messageId && m.role === 'assistant')
+    if (!msg) return false
+
+    msg.recordId = record.id
+    msg.record = { ...record }
+    msg.status = resolveRecordStatus(record)
+    msg.errorMessage = record.errorMessage || null
+    conv.updatedAt = Date.now()
+    persist()
+    return true
+  }
+
   function failAssistantForRecord(recordId, errorMessage) {
     let changed = false
     for (const conv of conversations.value) {
@@ -211,12 +241,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   function syncFromHistoryRecords(records) {
     if (!records?.length) return
     const byId = new Map(records.map(record => [Number(record.id), record]))
+    const usedIds = new Set()
     let changed = false
 
     for (const conv of conversations.value) {
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
         const id = msg.recordId || msg.record?.id
+        if (id != null) usedIds.add(Number(id))
         if (id == null) continue
         const latest = byId.get(Number(id))
         if (!latest) continue
@@ -232,6 +264,43 @@ export const useConversationsStore = defineStore('conversations', () => {
           conv.updatedAt = Date.now()
           changed = true
         }
+      }
+
+      for (let i = 0; i < conv.messages.length; i++) {
+        const msg = conv.messages[i]
+        if (msg.role !== 'assistant') continue
+
+        const currentStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const needsRecovered = currentStatus === 'processing' || !msg.record?.imagePath
+        if (!needsRecovered) continue
+
+        const userMsg = conv.messages[i - 1]
+        if (!userMsg || userMsg.role !== 'user') continue
+
+        const candidates = records
+          .filter(record =>
+            record?.id != null &&
+            Number(record.id) !== Number(msg.recordId || msg.record?.id) &&
+            record?.prompt === userMsg.content &&
+            recordMatchesConversation(record, conv) &&
+            resolveRecordStatus(record) === 'completed' &&
+            !!record.imagePath
+          )
+          .sort((a, b) =>
+            Math.abs(recordCreatedTime(a) - msg.createdAt) -
+            Math.abs(recordCreatedTime(b) - msg.createdAt)
+          )
+
+        const latest = candidates[0]
+        if (!latest) continue
+
+        msg.recordId = latest.id
+        msg.record = { ...latest }
+        msg.status = resolveRecordStatus(latest)
+        msg.errorMessage = latest.errorMessage || null
+        conv.updatedAt = Date.now()
+        usedIds.add(Number(latest.id))
+        changed = true
       }
     }
 
@@ -319,6 +388,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     ensureActive,
     addExchange,
     syncRecord,
+    attachRecordToMessage,
     failLatestAssistant,
     failAssistantForRecord,
     syncFromHistoryRecords,

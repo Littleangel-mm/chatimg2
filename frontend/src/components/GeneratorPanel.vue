@@ -86,14 +86,12 @@ async function generate() {
         :class="['tab', { active: mode === 'text2img' }]"
         @click="mode = 'text2img'"
       >
-        <span class="tab-icon">✨</span>
         Text to Image
       </button>
       <button
         :class="['tab', { active: mode === 'img2img' }]"
         @click="mode = 'img2img'"
       >
-        <span class="tab-icon">🖼</span>
         Image to Image
       </button>
     </div>

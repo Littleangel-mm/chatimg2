@@ -17,7 +17,6 @@ const items = computed(() => userStore.history)
       </div>
 
       <div v-if="items.length === 0" class="empty">
-        <span class="empty-icon">🎨</span>
         <p>还没有生成记录，试试上方的 Generator 吧</p>
       </div>
 

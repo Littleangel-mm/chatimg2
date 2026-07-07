@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '../api'
+import api, { generateApi } from '../api'
 import { useConversationsStore } from './conversations'
 
 const CACHE_KEY = 'userCache'
@@ -15,7 +15,7 @@ function normalizeStatus(status) {
 function resolveRecordStatus(record) {
   const status = normalizeStatus(record?.status)
   if (status === 'completed' || status === 'failed') return status
-  if (record?.imagePath && status === 'processing') return 'completed'
+  if (record?.imagePath) return 'completed'
   return status || 'processing'
 }
 
@@ -210,11 +210,6 @@ export const useUserStore = defineStore('user', () => {
     } catch {
       /* store may not be ready */
     }
-    for (const item of history.value) {
-      if (resolveRecordStatus(item) === 'processing' && item.id != null) {
-        ids.add(Number(item.id))
-      }
-    }
     return [...ids]
   }
 
@@ -279,7 +274,7 @@ export const useUserStore = defineStore('user', () => {
   async function generate({ prompt, type, sourceImage, model }) {
     generating.value = true
     try {
-      const { data } = await api.post('/user/generate', {
+      const { data } = await generateApi.post('/user/generate', {
         keyCode: keyCode.value,
         prompt,
         type,

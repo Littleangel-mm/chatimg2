@@ -23,7 +23,6 @@ function onAdminEnter() {
   <header class="header">
     <div class="container header-inner">
       <router-link to="/" class="logo tap">
-        <span class="logo-icon">✦</span>
         <span class="logo-text">img2.ai</span>
       </router-link>
 

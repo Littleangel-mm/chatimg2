@@ -21,10 +21,14 @@ public class ImageGenerationService {
     private final KeyService keyService;
     private final GenerationRecordRepository recordRepository;
     private final GenerationRecordService recordService;
-    private final AsyncGenerationExecutor asyncGenerationExecutor;
+    private final ImageApiClient imageApiClient;
+    private final ImageBackupService imageBackupService;
     private final ImageStorageConfig storageConfig;
 
     private static final int CREDITS_PER_GENERATION = 20;
+    private static final List<String> TEXT2IMG_FALLBACKS = List.of(
+            "gpt-image-2", "gpt-image-1", "dall-e-2", "dall-e-3"
+    );
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
                                              String sourceImageBase64, String model) {
@@ -50,8 +54,22 @@ public class ImageGenerationService {
         GenerationRecord record = recordService.createPendingRecord(
                 keyId, prompt, generationType, sourceImagePath);
 
-        asyncGenerationExecutor.runGeneration(
-                record.getId(), record.getTaskCode(), keyId, prompt, generationType, sourceImagePath, model);
+        try {
+            String imageUrl;
+            if ("img2img".equals(generationType)) {
+                byte[] imageBytes = Files.readAllBytes(Path.of(sourceImagePath));
+                imageUrl = imageApiClient.imageEdit(prompt, imageBytes, model);
+            } else {
+                imageUrl = imageApiClient.textToImage(prompt, model, TEXT2IMG_FALLBACKS);
+            }
+
+            ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, record.getTaskCode());
+            recordService.markCompleted(record.getId(), backup.imagePath());
+            record = recordRepository.findById(record.getId()).orElse(record);
+        } catch (Exception e) {
+            recordService.markFailed(record.getId(), keyId, e.getMessage());
+            throw new RuntimeException(e.getMessage(), e);
+        }
 
         return record;
     }

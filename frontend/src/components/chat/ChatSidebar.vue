@@ -48,15 +48,12 @@ function remove(id) {
 
     <div class="new-actions">
       <button class="new-btn" @click="newChat('text2img')">
-        <span class="icon">✨</span>
         新对话
       </button>
       <button class="new-btn secondary" @click="newChat('img2img')">
-        <span class="icon">🖼</span>
         新图生图
       </button>
       <button class="new-btn gallery" @click="openInspiration">
-        <span class="icon">🎨</span>
         灵感画廊
       </button>
     </div>
@@ -70,7 +67,6 @@ function remove(id) {
         :class="{ active: conv.id === convStore.activeId }"
       >
         <button type="button" class="conv-body" @click="select(conv.id)">
-          <span class="conv-icon">{{ conv.type === 'img2img' ? '🖼' : '💬' }}</span>
           <span class="conv-title">{{ conv.title }}</span>
         </button>
         <ConversationMenu

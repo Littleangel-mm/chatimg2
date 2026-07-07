@@ -114,7 +114,7 @@ async function send() {
   }
 
   error.value = ''
-  convStore.addExchange(conv.id, {
+  const exchange = convStore.addExchange(conv.id, {
     prompt: text,
     sourceImage: isImg2img ? sourceBase64.value : null,
     type: conv.type,
@@ -132,6 +132,7 @@ async function send() {
       sourceImage: isImg2img ? sourceBase64.value : undefined
     })
     convStore.syncRecord(record)
+    convStore.attachRecordToMessage(exchange?.assistantMsg?.id, record)
     if (isImg2img) clearSource()
   } catch (e) {
     const msg = e.response?.data?.message || e.message || '生成失败'
@@ -168,7 +169,9 @@ function applyPendingPrompt() {
 onMounted(() => {
   applyPendingPrompt()
   if (userStore.isActivated) {
-    userStore.resumePendingGenerations().catch(() => {})
+    userStore.fetchHistory().catch(() => {
+      userStore.resumePendingGenerations().catch(() => {})
+    })
   }
 })
 onActivated(applyPendingPrompt)
@@ -200,8 +203,8 @@ onActivated(applyPendingPrompt)
         <h2>今天想创作什么？</h2>
         <p>从左侧新建对话，或开始文生图 / 图生图</p>
         <div class="welcome-actions">
-          <button class="welcome-btn" @click="convStore.createConversation('text2img')">✨ 新对话</button>
-          <button class="welcome-btn" @click="convStore.createConversation('img2img')">🖼 新图生图</button>
+          <button class="welcome-btn" @click="convStore.createConversation('text2img')">新对话</button>
+          <button class="welcome-btn" @click="convStore.createConversation('img2img')">新图生图</button>
         </div>
       </div>
     </div>
