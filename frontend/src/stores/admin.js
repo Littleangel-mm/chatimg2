@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '../api'
+import { useAuthStore } from './auth'
 
 const CACHE_TTL = 30_000
 
@@ -15,7 +16,10 @@ export const useAdminStore = defineStore('admin', () => {
   const totalPages = ref(0)
   const pageCache = ref({})
 
-  const isLoggedIn = () => !!admin.value
+  const isLoggedIn = () => {
+    const authStore = useAuthStore()
+    return authStore.isAdmin || !!admin.value
+  }
 
   function applyPage(data, p) {
     keys.value = data.list
@@ -64,19 +68,22 @@ export const useAdminStore = defineStore('admin', () => {
   async function login(username, password) {
     loading.value = true
     try {
-      const { data } = await api.post('/admin/login', { username, password })
-      if (data.code !== 200) throw new Error(data.message)
-      admin.value = data.data
-      localStorage.setItem('admin', JSON.stringify(data.data))
+      const authStore = useAuthStore()
+      const session = await authStore.login({ account: username, password })
+      if (session.role !== 'ADMIN') throw new Error('无管理员权限')
+      admin.value = session
+      localStorage.setItem('admin', JSON.stringify(session))
       invalidateCache()
       prefetchKeys(0)
-      return data.data
+      return session
     } finally {
       loading.value = false
     }
   }
 
   function logout() {
+    const authStore = useAuthStore()
+    authStore.logout()
     admin.value = null
     localStorage.removeItem('admin')
     keys.value = []

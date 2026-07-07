@@ -3,11 +3,13 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
+import { useAuthStore } from '../../stores/auth'
 import ConversationMenu from './ConversationMenu.vue'
 
 const router = useRouter()
 const convStore = useConversationsStore()
 const userStore = useUserStore()
+const authStore = useAuthStore()
 
 const emit = defineEmits(['close-mobile'])
 
@@ -34,6 +36,12 @@ function rename(id, title) {
 
 function remove(id) {
   convStore.deleteConversation(id)
+}
+
+async function logout() {
+  await authStore.logout()
+  userStore.logout()
+  router.push('/login')
 }
 </script>
 
@@ -83,6 +91,10 @@ function remove(id) {
         {{ userStore.remainingCredits }} 积分
       </div>
       <router-link to="/admin" class="admin-link">管理后台</router-link>
+      <router-link v-if="authStore.isAdmin" to="/admin" class="footer-link">管理后台</router-link>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="footer-link logout-btn" @click="logout">
+        退出登录
+      </button>
     </div>
   </aside>
 </template>
@@ -285,12 +297,22 @@ function remove(id) {
 }
 
 .admin-link {
+  display: none;
+}
+
+.footer-link {
   font-size: 13px;
   color: var(--text-muted);
   padding: 6px 12px;
+  text-align: left;
+  background: transparent;
 }
 
-.admin-link:hover {
+.footer-link:hover {
   color: var(--text);
+}
+
+.logout-btn {
+  cursor: pointer;
 }
 </style>

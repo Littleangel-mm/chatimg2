@@ -13,8 +13,14 @@ public class GenerationRecord {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "key_id", nullable = false)
+    @Column(name = "key_id")
     private Integer keyId;
+
+    @Column(name = "user_id")
+    private Integer userId;
+
+    @Column(name = "user_email", length = 120)
+    private String userEmail;
 
     @Column(name = "task_code", nullable = false, unique = true, length = 32)
     private String taskCode;

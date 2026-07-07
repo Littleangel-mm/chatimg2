@@ -6,11 +6,18 @@ import com.example.chatimg2.dto.LoginRequest;
 import com.example.chatimg2.dto.PageResult;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.Admin;
+import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.entity.UserAccount;
+import com.example.chatimg2.repository.UserAccountRepository;
+import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.AdminService;
+import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -20,6 +27,9 @@ public class AdminController {
 
     private final AdminService adminService;
     private final KeyService keyService;
+    private final AuthService authService;
+    private final UserAccountRepository userRepository;
+    private final ImageGenerationService imageGenerationService;
 
     @PostMapping("/login")
     public ApiResponse<Admin> login(@RequestBody LoginRequest request) {
@@ -35,12 +45,28 @@ public class AdminController {
     @GetMapping("/keys")
     public ApiResponse<PageResult<ActivationKey>> listKeys(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "10") int size,
+            HttpServletRequest request) {
+        authService.requireAdmin(request);
         return ApiResponse.success(keyService.getKeysPage(page, size));
     }
 
+    @GetMapping("/users")
+    public ApiResponse<List<UserAccount>> listUsers(HttpServletRequest request) {
+        authService.requireAdmin(request);
+        return ApiResponse.success(userRepository.findAll());
+    }
+
+    @GetMapping("/generations")
+    public ApiResponse<List<GenerationRecord>> listGenerations(HttpServletRequest request) {
+        authService.requireAdmin(request);
+        return ApiResponse.success(imageGenerationService.getAdminHistory());
+    }
+
     @PostMapping("/keys")
-    public ApiResponse<ActivationKey> createKey(@RequestBody(required = false) KeyRequest request) {
+    public ApiResponse<ActivationKey> createKey(@RequestBody(required = false) KeyRequest request,
+                                                HttpServletRequest servletRequest) {
+        authService.requireAdmin(servletRequest);
         try {
             Integer totalCredits = request != null ? request.getTotalCredits() : null;
             ActivationKey key = keyService.createKey(totalCredits);
@@ -51,7 +77,9 @@ public class AdminController {
     }
 
     @PutMapping("/keys/{id}")
-    public ApiResponse<ActivationKey> updateKey(@PathVariable Integer id, @RequestBody KeyRequest request) {
+    public ApiResponse<ActivationKey> updateKey(@PathVariable Integer id, @RequestBody KeyRequest request,
+                                                HttpServletRequest servletRequest) {
+        authService.requireAdmin(servletRequest);
         try {
             if (request == null || request.getTotalCredits() == null) {
                 return ApiResponse.error(400, "请填写积分");
@@ -64,7 +92,8 @@ public class AdminController {
     }
 
     @PostMapping("/keys/{id}/reset-used")
-    public ApiResponse<ActivationKey> resetUsedCredits(@PathVariable Integer id) {
+    public ApiResponse<ActivationKey> resetUsedCredits(@PathVariable Integer id, HttpServletRequest servletRequest) {
+        authService.requireAdmin(servletRequest);
         try {
             ActivationKey key = keyService.resetUsedCredits(id);
             return ApiResponse.success("已用积分已重置", key);
@@ -74,7 +103,8 @@ public class AdminController {
     }
 
     @DeleteMapping("/keys/{id}")
-    public ApiResponse<Void> deleteKey(@PathVariable Integer id) {
+    public ApiResponse<Void> deleteKey(@PathVariable Integer id, HttpServletRequest servletRequest) {
+        authService.requireAdmin(servletRequest);
         try {
             keyService.deleteKey(id);
             return ApiResponse.success("密钥删除成功", null);

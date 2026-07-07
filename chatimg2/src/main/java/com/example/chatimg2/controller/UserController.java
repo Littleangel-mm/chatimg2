@@ -4,8 +4,11 @@ import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.GenerateRequest;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.service.AuthPrincipal;
+import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +24,7 @@ public class UserController {
 
     private final KeyService keyService;
     private final ImageGenerationService imageGenerationService;
+    private final AuthService authService;
 
     @PostMapping("/activate")
     public ApiResponse<Map<String, Object>> activate(@RequestBody Map<String, String> request) {
@@ -48,21 +52,32 @@ public class UserController {
     }
 
     @PostMapping("/generate")
-    public ApiResponse<GenerationRecord> generate(@RequestBody GenerateRequest request) {
-        if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
-            return ApiResponse.error(400, "请提供密钥");
-        }
+    public ApiResponse<GenerationRecord> generate(@RequestBody GenerateRequest request, HttpServletRequest servletRequest) {
         if (request.getPrompt() == null || request.getPrompt().isBlank()) {
             return ApiResponse.error(400, "请输入提示词");
         }
 
         try {
-            GenerationRecord record = imageGenerationService.submitGeneration(
-                    request.getKeyCode(),
-                    request.getPrompt(),
-                    request.getType(),
-                    request.getSourceImage(),
-                    request.getModel());
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            GenerationRecord record;
+            if (principal.isPresent() && principal.get().isUser()) {
+                record = imageGenerationService.submitGenerationForUser(
+                        principal.get().user(),
+                        request.getPrompt(),
+                        request.getType(),
+                        request.getSourceImage(),
+                        request.getModel());
+            } else {
+                if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
+                    return ApiResponse.error(401, "请先登录");
+                }
+                record = imageGenerationService.submitGeneration(
+                        request.getKeyCode(),
+                        request.getPrompt(),
+                        request.getType(),
+                        request.getSourceImage(),
+                        request.getModel());
+            }
             return ApiResponse.success("生成成功", record);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
@@ -72,9 +87,19 @@ public class UserController {
     @GetMapping("/generate/{recordId}")
     public ApiResponse<GenerationRecord> getGenerateStatus(
             @PathVariable Integer recordId,
-            @RequestParam String keyCode) {
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
         try {
-            GenerationRecord record = imageGenerationService.getRecordStatus(keyCode, recordId);
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            GenerationRecord record;
+            if (principal.isPresent() && principal.get().isUser()) {
+                record = imageGenerationService.getRecordStatusForUser(principal.get().user(), recordId);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "请先登录");
+                }
+                record = imageGenerationService.getRecordStatus(keyCode, recordId);
+            }
             return ApiResponse.success(record);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
@@ -82,9 +107,20 @@ public class UserController {
     }
 
     @GetMapping("/history")
-    public ApiResponse<List<GenerationRecord>> getHistory(@RequestParam String keyCode) {
+    public ApiResponse<List<GenerationRecord>> getHistory(
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
         try {
-            List<GenerationRecord> history = imageGenerationService.getHistory(keyCode);
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            List<GenerationRecord> history;
+            if (principal.isPresent() && principal.get().isUser()) {
+                history = imageGenerationService.getHistoryForUser(principal.get().user());
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "请先登录");
+                }
+                history = imageGenerationService.getHistory(keyCode);
+            }
             return ApiResponse.success(history);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());

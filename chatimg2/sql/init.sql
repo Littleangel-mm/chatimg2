@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS inspiration_prompts (
     media_type VARCHAR(16) NOT NULL DEFAULT 'image', -- image / video
     category VARCHAR(100),
     subcategory VARCHAR(100),
-    image_url VARCHAR(1000),                    -- 本地相对路径(inspiration/xxx.webp)或远程 URL
+    image_url VARCHAR(1000),                    -- 本地相对路径(upimg/xxx.webp、upvideo/xxx.mp4)或远程 URL
     source_url VARCHAR(1000),                   -- 原始远程图片地址
     prompt TEXT NOT NULL,
     sort_order INTEGER DEFAULT 0,               -- 保持来源顺序

@@ -26,7 +26,7 @@ public class InspirationPrompt {
     @Column(length = 100)
     private String subcategory;
 
-    /** 前端展示用：本地相对路径(inspiration/xxx.webp) 或远程 URL */
+    /** 前端展示用：本地相对路径(upimg/xxx.webp、upvideo/xxx.mp4) 或远程 URL */
     @Column(name = "image_url", length = 1000)
     private String imageUrl;
 

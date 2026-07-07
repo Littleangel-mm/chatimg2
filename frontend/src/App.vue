@@ -2,12 +2,14 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
+import { useAuthStore } from './stores/auth'
 import AppHeader from './components/AppHeader.vue'
 import { prefetchOnIdle, prefetchRoute } from './utils/prefetch'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const authStore = useAuthStore()
 const navigating = ref(false)
 
 const showHeader = computed(() => route.path.startsWith('/admin'))
@@ -22,6 +24,7 @@ function onWindowFocus() {
 }
 
 onMounted(() => {
+  authStore.fetchMe().catch(() => {})
   userStore.initSession()
   prefetchOnIdle()
   window.addEventListener('focus', onWindowFocus)

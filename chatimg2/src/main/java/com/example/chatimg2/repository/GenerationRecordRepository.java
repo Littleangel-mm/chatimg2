@@ -7,5 +7,9 @@ import java.util.List;
 public interface GenerationRecordRepository extends JpaRepository<GenerationRecord, Integer> {
     List<GenerationRecord> findTop30ByKeyIdOrderByCreatedAtDesc(Integer keyId);
 
+    List<GenerationRecord> findTop30ByUserIdOrderByCreatedAtDesc(Integer userId);
+
+    List<GenerationRecord> findTop100ByOrderByCreatedAtDesc();
+
     boolean existsByTaskCode(String taskCode);
 }

@@ -21,13 +21,19 @@ public class ImageStorageConfig {
 
     private Path backupDir;
     private Path sourcesDir;
+    private Path upimgDir;
+    private Path upvideoDir;
 
     @PostConstruct
     void init() throws IOException {
         backupDir = Paths.get(backupPath).toAbsolutePath().normalize();
         sourcesDir = backupDir.resolve("sources");
+        upimgDir = backupDir.resolve("upimg");
+        upvideoDir = backupDir.resolve("upvideo");
         Files.createDirectories(backupDir);
         Files.createDirectories(sourcesDir);
+        Files.createDirectories(upimgDir);
+        Files.createDirectories(upvideoDir);
         log.info("Image storage directory: {}", backupDir);
     }
 

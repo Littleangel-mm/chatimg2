@@ -43,9 +43,15 @@ public class ImageBackupService {
 
     /** 下载/保存图片到 img 目录，返回相对路径（文件名） */
     public BackupResult backupSync(String imageUrl, String taskCode) {
-        Path target = targetPath(taskCode);
+        return backupSync(imageUrl, taskCode, null);
+    }
+
+    public BackupResult backupSync(String imageUrl, String taskCode, String ownerFolder) {
+        Path target = targetPath(taskCode, ownerFolder);
         saveToImgDir(imageUrl, target);
-        String imagePath = taskCode + ".png";
+        String imagePath = ownerFolder == null || ownerFolder.isBlank()
+                ? taskCode + ".png"
+                : ownerFolder + "/" + taskCode + ".png";
         log.info("Saved generated image to img/{}", imagePath);
         return new BackupResult(imagePath);
     }
@@ -118,8 +124,16 @@ public class ImageBackupService {
                 && source.getParent().equals(storageConfig.getBackupDir());
     }
 
-    private Path targetPath(String taskCode) {
-        return storageConfig.getBackupDir().resolve(taskCode + ".png");
+    private Path targetPath(String taskCode, String ownerFolder) {
+        Path dir = ownerFolder == null || ownerFolder.isBlank()
+                ? storageConfig.getBackupDir()
+                : storageConfig.getBackupDir().resolve(ownerFolder);
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            throw new RuntimeException("创建图片目录失败: " + e.getMessage(), e);
+        }
+        return dir.resolve(taskCode + ".png");
     }
 
     private void downloadToImgDir(String imageUrl, Path target) {

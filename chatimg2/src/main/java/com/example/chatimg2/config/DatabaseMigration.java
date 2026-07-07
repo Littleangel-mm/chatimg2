@@ -71,7 +71,64 @@ public final class DatabaseMigration {
                     )
                     """);
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_inspiration_media_type ON inspiration_prompts(media_type)");
-            log.info("Database migration completed (generation_records.*, inspiration_prompts)");
+
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        email VARCHAR(120) NOT NULL UNIQUE,
+                        username VARCHAR(80),
+                        password_hash VARCHAR(255),
+                        role VARCHAR(20) NOT NULL DEFAULT 'USER',
+                        status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+                        total_credits INTEGER NOT NULL DEFAULT 100,
+                        used_credits INTEGER NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_login_at TIMESTAMP
+                    )
+                    """);
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)");
+
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS auth_sessions (
+                        id SERIAL PRIMARY KEY,
+                        token_hash VARCHAR(128) NOT NULL UNIQUE,
+                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        admin_id INTEGER REFERENCES admins(id) ON DELETE CASCADE,
+                        role VARCHAR(20) NOT NULL,
+                        expires_at TIMESTAMP NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_hash)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_admin_id ON auth_sessions(admin_id)");
+
+            stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS email_verification_codes (
+                        id SERIAL PRIMARY KEY,
+                        email VARCHAR(120) NOT NULL,
+                        scene VARCHAR(20) NOT NULL,
+                        code_hash VARCHAR(128) NOT NULL,
+                        used BOOLEAN NOT NULL DEFAULT FALSE,
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        expires_at TIMESTAMP NOT NULL,
+                        used_at TIMESTAMP,
+                        request_ip VARCHAR(64),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            stmt.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_email_codes_email_scene
+                    ON email_verification_codes(email, scene, used, created_at DESC)
+                    """);
+
+            stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_id INTEGER");
+            stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_id ON generation_records(user_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_email ON generation_records(user_email)");
+            stmt.execute("ALTER TABLE generation_records ALTER COLUMN key_id DROP NOT NULL");
+            log.info("Database migration completed (auth, generation_records.*, inspiration_prompts)");
         } catch (SQLException e) {
             throw new IllegalStateException("Database migration failed: " + e.getMessage(), e);
         }

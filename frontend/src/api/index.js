@@ -10,6 +10,22 @@ const generateApi = axios.create({
   timeout: 600000
 })
 
+function authToken() {
+  return localStorage.getItem('authToken') || ''
+}
+
+function attachAuth(config) {
+  const token = authToken()
+  if (token) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+}
+
+api.interceptors.request.use(attachAuth)
+generateApi.interceptors.request.use(attachAuth)
+
 /** 与后端静态资源路径一致，数据库只存相对路径，前端拼接展示 */
 export const IMAGE_BASE_PATH = '/img/'
 

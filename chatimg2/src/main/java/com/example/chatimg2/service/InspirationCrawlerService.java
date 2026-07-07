@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 爬取 img2.ai 灵感画廊接口 /api/photo-prompt-gallery，把 prompt 库落库到本地，
- * 并可选地把图片下载到 img/inspiration 目录实现自托管。
+ * 并可选地把媒体下载到 img/upimg 或 img/upvideo 目录实现自托管。
  */
 @Slf4j
 @Service
@@ -171,7 +171,7 @@ public class InspirationCrawlerService {
 
                 String localOrRemote = remoteUrl;
                 if (downloadImages && remoteUrl != null && !remoteUrl.isBlank()) {
-                    String saved = tryDownloadImage(remoteUrl, externalId, type);
+                    String saved = tryDownloadMedia(remoteUrl, externalId, type, item, sortOrder);
                     if (saved != null) {
                         localOrRemote = saved;
                         downloaded++;
@@ -232,15 +232,17 @@ public class InspirationCrawlerService {
         }
     }
 
-    /** 下载图片到 img/inspiration 目录，返回前端相对路径 inspiration/<name>，失败返回 null */
-    private String tryDownloadImage(String remoteUrl, String externalId, String mediaType) {
+    /** 下载媒体到 img/upimg 或 img/upvideo，返回前端相对路径，失败返回 null */
+    private String tryDownloadMedia(String remoteUrl, String externalId, String mediaType,
+                                    JsonNode item, int sortOrder) {
         try {
-            Path dir = storageConfig.getBackupDir().resolve("inspiration");
+            String folder = "video".equals(mediaType) ? "upvideo" : "upimg";
+            Path dir = "video".equals(mediaType) ? storageConfig.getUpvideoDir() : storageConfig.getUpimgDir();
             Files.createDirectories(dir);
 
-            String ext = extractExtension(remoteUrl);
+            String ext = extractExtension(remoteUrl, mediaType);
             String baseName = resolveBaseName(externalId, remoteUrl);
-            String fileName = mediaType + "_" + baseName + ext;
+            String fileName = baseName + ext;
             Path target = dir.resolve(fileName);
 
             Request request = new Request.Builder()
@@ -250,25 +252,42 @@ public class InspirationCrawlerService {
                     .build();
             try (Response response = client().newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
-                    log.warn("Download inspiration image failed {}: HTTP {}", remoteUrl, response.code());
+                    log.warn("Download inspiration media failed {}: HTTP {}", remoteUrl, response.code());
                     return null;
                 }
                 try (InputStream is = response.body().byteStream()) {
                     Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
-            return "inspiration/" + fileName;
+            String localPath = folder + "/" + fileName;
+            writePromptJson(dir.resolve(baseName + ".json"), item, mediaType, remoteUrl, localPath, sortOrder);
+            return localPath;
         } catch (Exception e) {
-            log.warn("Download inspiration image error {}: {}", remoteUrl, e.getMessage());
+            log.warn("Download inspiration media error {}: {}", remoteUrl, e.getMessage());
             return null;
         }
     }
 
     private static String resolveBaseName(String externalId, String remoteUrl) {
-        if (externalId != null && !externalId.isBlank()) {
-            return externalId;
-        }
-        return Integer.toUnsignedString(remoteUrl.hashCode(), 36);
+        String raw = externalId != null && !externalId.isBlank()
+                ? externalId
+                : Integer.toUnsignedString(remoteUrl.hashCode(), 36);
+        return raw.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private void writePromptJson(Path jsonPath, JsonNode item, String mediaType, String sourceUrl,
+                                 String localPath, int sortOrder) throws IOException {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("externalId", text(item, "id"));
+        data.put("mediaType", mediaType);
+        data.put("category", text(item, "category"));
+        data.put("subcategory", text(item, "subcategory"));
+        data.put("prompt", text(item, "prompt"));
+        data.put("sourceUrl", sourceUrl);
+        data.put("localPath", localPath);
+        data.put("sortOrder", sortOrder);
+        data.put("crawledAt", System.currentTimeMillis());
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(jsonPath.toFile(), data);
     }
 
     private OkHttpClient client() {
@@ -291,7 +310,7 @@ public class InspirationCrawlerService {
         return httpClient;
     }
 
-    private static String extractExtension(String url) {
+    private static String extractExtension(String url, String mediaType) {
         try {
             String path = HttpUrl.parse(url) != null ? HttpUrl.parse(url).encodedPath() : url;
             int dot = path.lastIndexOf('.');
@@ -303,7 +322,7 @@ public class InspirationCrawlerService {
             }
         } catch (Exception ignored) {
         }
-        return ".webp";
+        return "video".equals(mediaType) ? ".mp4" : ".webp";
     }
 
     private static String text(JsonNode node, String field) {

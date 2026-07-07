@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api, { generateApi } from '../api'
 import { useConversationsStore } from './conversations'
+import { useAuthStore } from './auth'
 
 const CACHE_KEY = 'userCache'
 const POLL_INTERVAL_MS = 4000
@@ -54,10 +55,17 @@ export const useUserStore = defineStore('user', () => {
   const syncingCredits = ref(false)
 
   const remainingCredits = computed(() => {
+    const authStore = useAuthStore()
+    if (authStore.isUser && authStore.user?.remainingCredits != null) {
+      return authStore.user.remainingCredits
+    }
     const remaining = totalCredits.value - usedCredits.value
     return Number.isFinite(remaining) ? Math.max(0, remaining) : 0
   })
-  const isActivated = computed(() => !!keyCode.value)
+  const isActivated = computed(() => {
+    const authStore = useAuthStore()
+    return !!keyCode.value || authStore.isUser
+  })
   const isBusy = computed(() => activating.value || generating.value)
 
   function persist() {
@@ -123,15 +131,18 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function fetchHistory() {
-    if (!keyCode.value) return
-    const { data } = await api.get('/user/history', { params: { keyCode: keyCode.value } })
+    const authStore = useAuthStore()
+    if (!keyCode.value && !authStore.isUser) return
+    const params = keyCode.value ? { keyCode: keyCode.value } : undefined
+    const { data } = await api.get('/user/history', { params })
     if (data.code === 200) {
       history.value = data.data || []
       persist()
       try {
         const convStore = useConversationsStore()
-        convStore.bindKeyCode(keyCode.value)
-        convStore.importFromHistory(history.value, keyCode.value)
+        const ownerKey = authStore.user?.email || keyCode.value
+        convStore.bindKeyCode(ownerKey)
+        convStore.importFromHistory(history.value, ownerKey)
         convStore.syncFromHistoryRecords(history.value)
       } catch {
         /* ignore */
@@ -141,6 +152,11 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function syncCreditsFromServer() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      await authStore.fetchMe().catch(() => {})
+      return true
+    }
     if (!keyCode.value) return false
     syncingCredits.value = true
     try {
@@ -159,6 +175,12 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function refreshSession() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      await authStore.fetchMe()
+      await fetchHistory()
+      return
+    }
     if (!keyCode.value) return
     refreshing.value = true
     try {
@@ -176,10 +198,15 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function initSession() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      fetchHistory().catch(() => {})
+      return
+    }
     if (!keyCode.value) return
     hydrateFromCache()
     try {
-      useConversationsStore().bindKeyCode(keyCode.value)
+      useConversationsStore().bindKeyCode(authStore.user?.email || keyCode.value)
     } catch {
       /* ignore */
     }
@@ -230,9 +257,8 @@ export const useUserStore = defineStore('user', () => {
     try {
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await sleep(POLL_INTERVAL_MS)
-        const { data } = await api.get(`/user/generate/${normalizedId}`, {
-          params: { keyCode: keyCode.value }
-        })
+        const params = keyCode.value ? { keyCode: keyCode.value } : undefined
+        const { data } = await api.get(`/user/generate/${normalizedId}`, { params })
         if (data.code !== 200) throw new Error(data.message)
 
         const record = data.data
@@ -255,7 +281,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function resumePendingGenerations() {
-    if (!keyCode.value) return
+    const authStore = useAuthStore()
+    if (!keyCode.value && !authStore.isUser) return
     const pendingIds = collectPendingRecordIds()
     if (!pendingIds.length) return
     await Promise.allSettled(
