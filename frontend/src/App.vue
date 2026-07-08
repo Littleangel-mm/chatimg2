@@ -1,15 +1,12 @@
-<script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+﻿import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
-import { useAuthStore } from './stores/auth'
 import AppHeader from './components/AppHeader.vue'
 import { prefetchOnIdle, prefetchRoute } from './utils/prefetch'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
-const authStore = useAuthStore()
 const navigating = ref(false)
 
 const showHeader = computed(() => route.path.startsWith('/admin'))
@@ -24,7 +21,6 @@ function onWindowFocus() {
 }
 
 onMounted(() => {
-  authStore.fetchMe().catch(() => {})
   userStore.initSession()
   prefetchOnIdle()
   window.addEventListener('focus', onWindowFocus)
@@ -51,69 +47,10 @@ onUnmounted(() => {
     <div class="nav-bar" :class="{ active: navigating }" />
     <AppHeader v-if="showHeader" />
     <router-view v-slot="{ Component, route: r }">
-      <keep-alive :include="['home', 'inspiration', 'admin-keys']">
+      <keep-alive :include="['home', 'inspiration', 'admin-users', 'admin-keys']">
         <component v-if="Component" :is="Component" :key="r.name" class="page-view" />
       </keep-alive>
       <div v-if="!Component" class="page-loading">加载中...</div>
     </router-view>
   </div>
 </template>
-
-<style scoped>
-.app-root {
-  min-height: 100vh;
-}
-
-.app-root.chat-mode {
-  min-height: 100vh;
-  height: 100vh;
-  height: 100dvh;
-  overflow: hidden;
-}
-
-.app-root.chat-mode .page-view {
-  height: 100%;
-  animation: none;
-}
-
-.page-view {
-  animation: page-in 0.15s ease;
-}
-
-@keyframes page-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.nav-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 2px;
-  width: 0;
-  background: var(--gradient);
-  z-index: 9999;
-  transition: width 0.15s ease;
-  pointer-events: none;
-}
-
-.nav-bar.active {
-  width: 70%;
-  transition: width 0.4s ease;
-}
-
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: calc(100vh - 64px);
-  color: var(--text-muted);
-  font-size: 14px;
-}
-</style>

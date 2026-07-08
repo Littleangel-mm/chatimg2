@@ -1,4 +1,4 @@
-package com.example.chatimg2.service;
+﻿package com.example.chatimg2.service;
 
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.repository.GenerationRecordRepository;
@@ -34,14 +34,12 @@ public class ImageBackupService {
 
     public record BackupResult(String imagePath) {}
 
-    /** 将 base64 图片保存到 img 目录（API 中间步骤，临时文件名） */
     public String saveBase64(String b64) throws IOException {
         Path filePath = storageConfig.getBackupDir().resolve(UUID.randomUUID() + ".png");
         Files.write(filePath, Base64.getDecoder().decode(b64));
         return filePath.getFileName().toString();
     }
 
-    /** 下载/保存图片到 img 目录，返回相对路径（文件名） */
     public BackupResult backupSync(String imageUrl, String taskCode) {
         return backupSync(imageUrl, taskCode, null);
     }

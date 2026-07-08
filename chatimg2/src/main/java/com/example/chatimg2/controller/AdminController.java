@@ -1,9 +1,11 @@
-package com.example.chatimg2.controller;
+﻿package com.example.chatimg2.controller;
 
+import com.example.chatimg2.dto.AdminUserDto;
 import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.KeyRequest;
 import com.example.chatimg2.dto.LoginRequest;
 import com.example.chatimg2.dto.PageResult;
+import com.example.chatimg2.dto.ResetPasswordResponse;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.Admin;
 import com.example.chatimg2.entity.GenerationRecord;
@@ -17,8 +19,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.SecureRandom;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -30,6 +37,9 @@ public class AdminController {
     private final AuthService authService;
     private final UserAccountRepository userRepository;
     private final ImageGenerationService imageGenerationService;
+
+    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     @PostMapping("/login")
     public ApiResponse<Admin> login(@RequestBody LoginRequest request) {
@@ -52,9 +62,27 @@ public class AdminController {
     }
 
     @GetMapping("/users")
-    public ApiResponse<List<UserAccount>> listUsers(HttpServletRequest request) {
+    public ApiResponse<List<AdminUserDto>> listUsers(HttpServletRequest request) {
         authService.requireAdmin(request);
-        return ApiResponse.success(userRepository.findAll());
+        List<AdminUserDto> users = userRepository.findAllByOrderByCreatedAtDesc().stream()
+                .map(this::toUserDto)
+                .collect(Collectors.toList());
+        return ApiResponse.success(users);
+    }
+
+    @PostMapping("/users/{id}/reset-password")
+    public ApiResponse<ResetPasswordResponse> resetPassword(@PathVariable Integer id, HttpServletRequest request) {
+        authService.requireAdmin(request);
+        UserAccount user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        String tempPassword = generateTempPassword();
+        user.setPasswordHash(authService.sha256(user.getEmail() + ":" + tempPassword));
+        userRepository.save(user);
+        return ApiResponse.success("密码已重置", new ResetPasswordResponse(
+                user.getId(),
+                user.getEmail(),
+                tempPassword,
+                "******"));
     }
 
     @GetMapping("/generations")
@@ -111,5 +139,37 @@ public class AdminController {
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
         }
+    }
+
+    private AdminUserDto toUserDto(UserAccount user) {
+        List<String> boundKeys = new ArrayList<>();
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            keyService.getBoundKeysByUser(user).forEach(key -> boundKeys.add(key.getKeyCode()));
+        }
+        return new AdminUserDto(
+                user.getId(),
+                user.getEmail(),
+                user.getUsername(),
+                "******",
+                user.getRole(),
+                user.getStatus(),
+                user.getTotalCredits(),
+                user.getUsedCredits(),
+                user.getRemainingCredits(),
+                formatDate(user.getCreatedAt()),
+                formatDate(user.getLastLoginAt()),
+                boundKeys,
+                boundKeys.size()
+        );
+    }
+
+    private String formatDate(java.time.LocalDateTime time) {
+        return time == null ? null : time.format(FORMATTER);
+    }
+
+    private String generateTempPassword() {
+        byte[] bytes = new byte[6];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).substring(0, 8);
     }
 }

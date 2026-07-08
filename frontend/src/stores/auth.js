@@ -1,5 +1,5 @@
-import { computed, ref } from 'vue'
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
 import api from '../api'
 
 const TOKEN_KEY = 'authToken'

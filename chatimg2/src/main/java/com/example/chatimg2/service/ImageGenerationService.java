@@ -1,4 +1,4 @@
-package com.example.chatimg2.service;
+﻿package com.example.chatimg2.service;
 
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.ActivationKey;
@@ -13,7 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -38,21 +37,18 @@ public class ImageGenerationService {
                 .orElseThrow(() -> new RuntimeException("密钥无效或已禁用"));
 
         if (key.getRemainingCredits() < CREDITS_PER_GENERATION) {
-            throw new RuntimeException("积分不足，剩余" + key.getRemainingCredits());
+            throw new RuntimeException("积分不足，剩余 " + key.getRemainingCredits());
         }
 
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
 
-        Integer keyId = key.getId();
-        GenerationRecord record = recordService.createPendingRecord(
-                keyId, prompt, generationType, sourceImagePath);
-
+        GenerationRecord record = recordService.createPendingRecord(key.getId(), prompt, generationType, sourceImagePath);
         try {
             completeGeneration(record, prompt, generationType, sourceImagePath, model, null);
             return recordRepository.findById(record.getId()).orElse(record);
         } catch (Exception e) {
-            recordService.markFailed(record.getId(), keyId, e.getMessage());
+            recordService.markFailed(record.getId(), key.getId(), e.getMessage());
             throw new RuntimeException(e.getMessage(), e);
         }
     }
@@ -60,16 +56,14 @@ public class ImageGenerationService {
     public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
                                                     String sourceImageBase64, String model) {
         if (user.getRemainingCredits() < CREDITS_PER_GENERATION) {
-            throw new RuntimeException("积分不足，剩余" + user.getRemainingCredits());
+            throw new RuntimeException("积分不足，剩余 " + user.getRemainingCredits());
         }
 
         String ownerFolder = authService.safeEmailFolder(user.getEmail());
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
 
-        GenerationRecord record = recordService.createPendingRecordForUser(
-                user, prompt, generationType, sourceImagePath);
-
+        GenerationRecord record = recordService.createPendingRecordForUser(user, prompt, generationType, sourceImagePath);
         try {
             completeGeneration(record, prompt, generationType, sourceImagePath, model, ownerFolder);
             return recordRepository.findById(record.getId()).orElse(record);
@@ -127,8 +121,7 @@ public class ImageGenerationService {
             imageUrl = imageApiClient.textToImage(prompt, model, TEXT2IMG_FALLBACKS);
         }
 
-        ImageBackupService.BackupResult backup = imageBackupService.backupSync(
-                imageUrl, record.getTaskCode(), ownerFolder);
+        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, record.getTaskCode(), ownerFolder);
         recordService.markCompleted(record.getId(), backup.imagePath());
     }
 
@@ -167,7 +160,7 @@ public class ImageGenerationService {
 
     private String saveSourceImage(byte[] imageBytes, String ownerFolder) {
         try {
-            String fileName = "src_" + UUID.randomUUID() + ".png";
+            String fileName = "src_" + java.util.UUID.randomUUID() + ".png";
             Path dir = ownerFolder == null || ownerFolder.isBlank()
                     ? storageConfig.getSourcesDir()
                     : storageConfig.getSourcesDir().resolve(ownerFolder);

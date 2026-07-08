@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConversationsStore } from '../../stores/conversations'
@@ -55,33 +55,18 @@ async function logout() {
     </div>
 
     <div class="new-actions">
-      <button class="new-btn" @click="newChat('text2img')">
-        新对话
-      </button>
-      <button class="new-btn secondary" @click="newChat('img2img')">
-        新图生图
-      </button>
-      <button class="new-btn gallery" @click="openInspiration">
-        灵感画廊
-      </button>
+      <button class="new-btn" @click="newChat('text2img')">新对话</button>
+      <button class="new-btn secondary" @click="newChat('img2img')">新图生图</button>
+      <button class="new-btn gallery" @click="openInspiration">灵感画廊</button>
     </div>
 
     <div class="conv-list">
       <p v-if="items.length === 0" class="empty-hint">暂无对话，点击上方开始</p>
-      <div
-        v-for="conv in items"
-        :key="conv.id"
-        class="conv-item"
-        :class="{ active: conv.id === convStore.activeId }"
-      >
+      <div v-for="conv in items" :key="conv.id" class="conv-item" :class="{ active: conv.id === convStore.activeId }">
         <button type="button" class="conv-body" @click="select(conv.id)">
           <span class="conv-title">{{ conv.title }}</span>
         </button>
-        <ConversationMenu
-          :conversation="conv"
-          @rename="rename"
-          @delete="remove"
-        />
+        <ConversationMenu :conversation="conv" @rename="rename" @delete="remove" />
       </div>
     </div>
 
@@ -90,11 +75,8 @@ async function logout() {
         <span class="dot" />
         {{ userStore.remainingCredits }} 积分
       </div>
-      <router-link to="/admin" class="admin-link">管理后台</router-link>
-      <router-link v-if="authStore.isAdmin" to="/admin" class="footer-link">管理后台</router-link>
-      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="footer-link logout-btn" @click="logout">
-        退出登录
-      </button>
+      <router-link v-if="authStore.isAdmin" to="/admin/users" class="admin-link">管理后台</router-link>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="logout-link" @click="logout">退出登录</button>
     </div>
   </aside>
 </template>
@@ -195,10 +177,6 @@ async function logout() {
   opacity: 0.94;
 }
 
-.new-btn .icon {
-  font-size: 16px;
-}
-
 .conv-list {
   flex: 1;
   overflow-y: auto;
@@ -255,11 +233,6 @@ async function logout() {
   color: var(--text);
 }
 
-.conv-icon {
-  flex-shrink: 0;
-  font-size: 14px;
-}
-
 .conv-title {
   flex: 1;
   overflow: hidden;
@@ -297,10 +270,16 @@ async function logout() {
 }
 
 .admin-link {
-  display: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 6px 12px;
 }
 
-.footer-link {
+.admin-link:hover {
+  color: var(--text);
+}
+
+.logout-link {
   font-size: 13px;
   color: var(--text-muted);
   padding: 6px 12px;
@@ -308,11 +287,7 @@ async function logout() {
   background: transparent;
 }
 
-.footer-link:hover {
+.logout-link:hover {
   color: var(--text);
-}
-
-.logout-btn {
-  cursor: pointer;
 }
 </style>

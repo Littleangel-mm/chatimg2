@@ -1,7 +1,8 @@
-package com.example.chatimg2.entity;
+﻿package com.example.chatimg2.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
 @Data
@@ -24,6 +25,12 @@ public class ActivationKey {
 
     @Column(nullable = false)
     private Short status = 1;
+
+    @Column(name = "user_id")
+    private Integer userId;
+
+    @Column(name = "user_email", length = 120)
+    private String userEmail;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

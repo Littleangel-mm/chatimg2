@@ -1,4 +1,4 @@
-package com.example.chatimg2.controller;
+﻿package com.example.chatimg2.controller;
 
 import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.GenerateRequest;
@@ -27,7 +27,7 @@ public class UserController {
     private final AuthService authService;
 
     @PostMapping("/activate")
-    public ApiResponse<Map<String, Object>> activate(@RequestBody Map<String, String> request) {
+    public ApiResponse<Map<String, Object>> activate(@RequestBody Map<String, String> request, HttpServletRequest servletRequest) {
         String keyCode = request.get("keyCode");
         if (keyCode == null || keyCode.isBlank()) {
             return ApiResponse.error(400, "请输入密钥");
@@ -40,6 +40,10 @@ public class UserController {
         }
 
         ActivationKey key = keyOpt.get();
+        Optional<AuthPrincipal> principal = authService.current(servletRequest);
+        if (principal.isPresent() && principal.get().isUser()) {
+            key = keyService.bindToUser(key, principal.get().user());
+        }
 
         Map<String, Object> data = new HashMap<>();
         data.put("keyId", key.getId());
@@ -47,6 +51,8 @@ public class UserController {
         data.put("totalCredits", key.getTotalCredits());
         data.put("usedCredits", key.getUsedCredits());
         data.put("remainingCredits", key.getRemainingCredits());
+        data.put("userId", key.getUserId());
+        data.put("userEmail", key.getUserEmail());
 
         return ApiResponse.success("激活成功", data);
     }
@@ -69,7 +75,7 @@ public class UserController {
                         request.getModel());
             } else {
                 if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
-                    return ApiResponse.error(401, "请先登录");
+                    return ApiResponse.error(401, "请先登录或激活密钥");
                 }
                 record = imageGenerationService.submitGeneration(
                         request.getKeyCode(),
@@ -96,7 +102,7 @@ public class UserController {
                 record = imageGenerationService.getRecordStatusForUser(principal.get().user(), recordId);
             } else {
                 if (keyCode == null || keyCode.isBlank()) {
-                    return ApiResponse.error(401, "请先登录");
+                    return ApiResponse.error(401, "请先登录或激活密钥");
                 }
                 record = imageGenerationService.getRecordStatus(keyCode, recordId);
             }
@@ -117,7 +123,7 @@ public class UserController {
                 history = imageGenerationService.getHistoryForUser(principal.get().user());
             } else {
                 if (keyCode == null || keyCode.isBlank()) {
-                    return ApiResponse.error(401, "请先登录");
+                    return ApiResponse.error(401, "请先登录或激活密钥");
                 }
                 history = imageGenerationService.getHistory(keyCode);
             }

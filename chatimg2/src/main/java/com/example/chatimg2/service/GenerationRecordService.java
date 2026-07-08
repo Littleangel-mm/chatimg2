@@ -1,6 +1,6 @@
-package com.example.chatimg2.service;
+﻿package com.example.chatimg2.service;
 
-import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.UserAccount;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import com.example.chatimg2.repository.UserAccountRepository;
@@ -31,15 +31,15 @@ public class GenerationRecordService {
     private static final int DB_SAVE_MAX_ATTEMPTS = 6;
     private static final long DB_SAVE_RETRY_DELAY_MS = 3000L;
 
-    public GenerationRecord createPendingRecord(Integer keyId, String prompt,
-                                                String generationType, String sourceImagePath) {
+    public com.example.chatimg2.entity.GenerationRecord createPendingRecord(Integer keyId, String prompt,
+                                                                            String generationType, String sourceImagePath) {
         try {
             return runDbOperationWithRetry(() -> {
-                GenerationRecord saved = transactionTemplate.execute(status -> {
+                com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
                     if (!keyService.deductCredits(keyId, CREDITS_PER_GENERATION)) {
                         throw new RuntimeException("积分扣除失败");
                     }
-                    GenerationRecord pending = new GenerationRecord();
+                    com.example.chatimg2.entity.GenerationRecord pending = new com.example.chatimg2.entity.GenerationRecord();
                     pending.setKeyId(keyId);
                     pending.setTaskCode(taskCodeService.generate());
                     pending.setPrompt(prompt);
@@ -59,20 +59,20 @@ public class GenerationRecordService {
         }
     }
 
-    public GenerationRecord createPendingRecordForUser(UserAccount user, String prompt,
-                                                       String generationType, String sourceImagePath) {
+    public com.example.chatimg2.entity.GenerationRecord createPendingRecordForUser(UserAccount user, String prompt,
+                                                                                    String generationType, String sourceImagePath) {
         try {
             return runDbOperationWithRetry(() -> {
-                GenerationRecord saved = transactionTemplate.execute(status -> {
+                com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
                     UserAccount lockedUser = userRepository.findById(user.getId())
                             .orElseThrow(() -> new RuntimeException("用户不存在"));
                     if (lockedUser.getRemainingCredits() < CREDITS_PER_GENERATION) {
-                        throw new RuntimeException("积分不足，剩余" + lockedUser.getRemainingCredits());
+                        throw new RuntimeException("积分不足，剩余 " + lockedUser.getRemainingCredits());
                     }
                     lockedUser.setUsedCredits(lockedUser.getUsedCredits() + CREDITS_PER_GENERATION);
                     userRepository.save(lockedUser);
 
-                    GenerationRecord pending = new GenerationRecord();
+                    com.example.chatimg2.entity.GenerationRecord pending = new com.example.chatimg2.entity.GenerationRecord();
                     pending.setUserId(lockedUser.getId());
                     pending.setUserEmail(lockedUser.getEmail());
                     pending.setTaskCode(taskCodeService.generate());
@@ -95,8 +95,8 @@ public class GenerationRecordService {
 
     public void markCompleted(Integer recordId, String imagePath) {
         runDbOperationWithRetry(() -> {
-            GenerationRecord saved = transactionTemplate.execute(status -> {
-                GenerationRecord record = recordRepository.findById(recordId)
+            com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
+                com.example.chatimg2.entity.GenerationRecord record = recordRepository.findById(recordId)
                         .orElseThrow(() -> new RuntimeException("记录不存在"));
                 record.setImagePath(imagePath);
                 record.setLocalPath(null);

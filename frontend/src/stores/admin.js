@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '../api'
 import { useAuthStore } from './auth'
@@ -8,8 +8,10 @@ const CACHE_TTL = 30_000
 export const useAdminStore = defineStore('admin', () => {
   const admin = ref(JSON.parse(localStorage.getItem('admin') || 'null'))
   const keys = ref([])
+  const users = ref([])
   const loading = ref(false)
   const tableLoading = ref(false)
+  const userLoading = ref(false)
   const page = ref(0)
   const size = ref(10)
   const total = ref(0)
@@ -56,6 +58,18 @@ export const useAdminStore = defineStore('admin', () => {
     }
   }
 
+  async function fetchUsers() {
+    userLoading.value = true
+    try {
+      const { data } = await api.get('/admin/users')
+      if (data.code !== 200) throw new Error(data.message)
+      users.value = data.data || []
+      return users.value
+    } finally {
+      userLoading.value = false
+    }
+  }
+
   function prefetchKeys(p = 0) {
     if (getCached(p)) return Promise.resolve(getCached(p))
     return fetchKeys(p, { background: true }).catch(() => {})
@@ -87,6 +101,7 @@ export const useAdminStore = defineStore('admin', () => {
     admin.value = null
     localStorage.removeItem('admin')
     keys.value = []
+    users.value = []
     invalidateCache()
   }
 
@@ -125,6 +140,13 @@ export const useAdminStore = defineStore('admin', () => {
     await fetchKeys(nextPage)
   }
 
+  async function resetPassword(userId) {
+    const { data } = await api.post(`/admin/users/${userId}/reset-password`)
+    if (data.code !== 200) throw new Error(data.message)
+    await fetchUsers()
+    return data.data
+  }
+
   async function crawlInspiration(mediaType) {
     const { data } = await api.post('/admin/inspiration/crawl', null, {
       params: mediaType ? { mediaType } : {}
@@ -140,8 +162,8 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   return {
-    admin, keys, loading, tableLoading, page, size, total, totalPages,
-    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits,
-    crawlInspiration, inspirationStatus
+    admin, keys, users, loading, tableLoading, userLoading, page, size, total, totalPages,
+    isLoggedIn, login, logout, fetchKeys, fetchUsers, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits,
+    resetPassword, crawlInspiration, inspirationStatus
   }
 })

@@ -1,7 +1,7 @@
-package com.example.chatimg2.service;
+﻿package com.example.chatimg2.service;
 
-import com.example.chatimg2.dto.PageResult;
 import com.example.chatimg2.entity.ActivationKey;
+import com.example.chatimg2.entity.UserAccount;
 import com.example.chatimg2.repository.ActivationKeyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -10,6 +10,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -19,11 +20,11 @@ public class KeyService {
 
     private final ActivationKeyRepository keyRepository;
 
-    public PageResult<ActivationKey> getKeysPage(int page, int size) {
+    public com.example.chatimg2.dto.PageResult<ActivationKey> getKeysPage(int page, int size) {
         Page<ActivationKey> result = keyRepository.findAll(
                 PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt")));
 
-        PageResult<ActivationKey> pageResult = new PageResult<>();
+        com.example.chatimg2.dto.PageResult<ActivationKey> pageResult = new com.example.chatimg2.dto.PageResult<>();
         pageResult.setList(result.getContent());
         pageResult.setTotal(result.getTotalElements());
         pageResult.setPage(page);
@@ -37,6 +38,19 @@ public class KeyService {
             return Optional.empty();
         }
         return keyRepository.findByKeyCode(keyCode.trim().toUpperCase());
+    }
+
+    public List<ActivationKey> getBoundKeysByUser(UserAccount user) {
+        if (user == null) {
+            return List.of();
+        }
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            List<ActivationKey> byEmail = keyRepository.findAllByUserEmailOrderByCreatedAtDesc(user.getEmail());
+            if (!byEmail.isEmpty()) {
+                return byEmail;
+            }
+        }
+        return keyRepository.findAllByUserIdOrderByCreatedAtDesc(user.getId());
     }
 
     public ActivationKey createKey(Integer totalCredits) {
@@ -62,9 +76,7 @@ public class KeyService {
         ActivationKey key = keyRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("密钥不存在"));
         if (totalCredits < key.getUsedCredits()) {
-            throw new RuntimeException(
-                    "总积分不能小于已用积分（" + key.getUsedCredits() + "），请设置为至少 "
-                            + key.getUsedCredits() + "，或使用「重置已用」");
+            throw new RuntimeException("总积分不能小于已用积分（" + key.getUsedCredits() + "）");
         }
         key.setTotalCredits(totalCredits);
         return keyRepository.save(key);
@@ -91,14 +103,23 @@ public class KeyService {
             return Optional.empty();
         }
         Optional<ActivationKey> keyOpt = keyRepository.findByKeyCode(keyCode.trim().toUpperCase());
-        if (keyOpt.isPresent()) {
-            ActivationKey key = keyOpt.get();
-            if (key.getStatus() == 0) {
-                return Optional.empty();
-            }
-            return Optional.of(key);
+        if (keyOpt.isPresent() && keyOpt.get().getStatus() != null && keyOpt.get().getStatus() == 1) {
+            return keyOpt;
         }
         return Optional.empty();
+    }
+
+    @Transactional
+    public ActivationKey bindToUser(ActivationKey key, UserAccount user) {
+        if (key == null || user == null) {
+            return key;
+        }
+        if (key.getUserId() != null && !key.getUserId().equals(user.getId())) {
+            throw new RuntimeException("该密钥已绑定其他账号");
+        }
+        key.setUserId(user.getId());
+        key.setUserEmail(user.getEmail());
+        return keyRepository.save(key);
     }
 
     @Transactional

@@ -1,4 +1,4 @@
-const prefetched = new Set()
+﻿const prefetched = new Set()
 
 export const routeChunks = {
   home: () => import('../views/HomeView.vue'),
@@ -6,6 +6,7 @@ export const routeChunks = {
   login: () => import('../views/AuthLogin.vue'),
   register: () => import('../views/AuthRegister.vue'),
   'admin-login': () => import('../views/admin/AdminLogin.vue'),
+  'admin-users': () => import('../views/admin/AdminUsers.vue'),
   'admin-keys': () => import('../views/admin/AdminKeys.vue')
 }
 
