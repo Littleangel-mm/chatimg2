@@ -85,29 +85,54 @@ public class ImageGenerationService {
         ActivationKey key = keyService.getByKeyCode(keyCode)
                 .orElseThrow(() -> new RuntimeException("密钥不存在"));
         return recordRepository.findTop30ByKeyIdOrderByCreatedAtDesc(key.getId()).stream()
+                .map(this::normalizeCompletedRecord)
                 .filter(r -> !"failed".equals(r.getStatus()))
                 .toList();
     }
 
     public List<GenerationRecord> getHistoryForUser(UserAccount user) {
         return recordRepository.findTop30ByUserIdOrderByCreatedAtDesc(user.getId()).stream()
+                .map(this::normalizeCompletedRecord)
                 .filter(r -> !"failed".equals(r.getStatus()))
                 .toList();
     }
 
     public List<GenerationRecord> getAdminHistory() {
-        return recordRepository.findTop100ByOrderByCreatedAtDesc();
+        return recordRepository.findTop100ByOrderByCreatedAtDesc().stream()
+                .map(this::normalizeCompletedRecord)
+                .toList();
     }
 
     private GenerationRecord normalizeCompletedRecord(GenerationRecord record) {
+        boolean changed = repairUserImagePath(record);
         if ("processing".equals(record.getStatus())
                 && record.getImagePath() != null
                 && !record.getImagePath().isBlank()) {
             record.setStatus("completed");
             record.setErrorMessage(null);
-            return recordRepository.save(record);
+            changed = true;
         }
-        return record;
+        return changed ? recordRepository.save(record) : record;
+    }
+
+    private boolean repairUserImagePath(GenerationRecord record) {
+        if (record == null
+                || record.getUserEmail() == null
+                || record.getUserEmail().isBlank()
+                || record.getImagePath() == null
+                || record.getImagePath().isBlank()
+                || record.getImagePath().contains("/")
+                || record.getImagePath().contains("\\")) {
+            return false;
+        }
+
+        String ownerFolder = authService.safeEmailFolder(record.getUserEmail());
+        Path ownerImage = storageConfig.getBackupDir().resolve(ownerFolder).resolve(record.getImagePath()).normalize();
+        if (!Files.exists(ownerImage)) {
+            return false;
+        }
+        record.setImagePath(ownerFolder + "/" + record.getImagePath());
+        return true;
     }
 
     private String resolveGenerationType(String type) {
