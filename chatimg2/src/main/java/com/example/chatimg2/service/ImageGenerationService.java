@@ -21,15 +21,11 @@ public class ImageGenerationService {
     private final KeyService keyService;
     private final GenerationRecordRepository recordRepository;
     private final GenerationRecordService recordService;
-    private final ImageApiClient imageApiClient;
-    private final ImageBackupService imageBackupService;
+    private final AsyncGenerationExecutor asyncGenerationExecutor;
     private final ImageStorageConfig storageConfig;
     private final AuthService authService;
 
     private static final int CREDITS_PER_GENERATION = 20;
-    private static final List<String> TEXT2IMG_FALLBACKS = List.of(
-            "gpt-image-2", "gpt-image-1", "dall-e-2", "dall-e-3"
-    );
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
                                              String sourceImageBase64, String model) {
@@ -44,13 +40,9 @@ public class ImageGenerationService {
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
 
         GenerationRecord record = recordService.createPendingRecord(key.getId(), prompt, generationType, sourceImagePath);
-        try {
-            completeGeneration(record, prompt, generationType, sourceImagePath, model, null);
-            return recordRepository.findById(record.getId()).orElse(record);
-        } catch (Exception e) {
-            recordService.markFailed(record.getId(), key.getId(), e.getMessage());
-            throw new RuntimeException(e.getMessage(), e);
-        }
+        asyncGenerationExecutor.runGeneration(
+                record.getId(), record.getTaskCode(), key.getId(), null, prompt, generationType, sourceImagePath, model, null);
+        return record;
     }
 
     public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
@@ -64,13 +56,9 @@ public class ImageGenerationService {
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
 
         GenerationRecord record = recordService.createPendingRecordForUser(user, prompt, generationType, sourceImagePath);
-        try {
-            completeGeneration(record, prompt, generationType, sourceImagePath, model, ownerFolder);
-            return recordRepository.findById(record.getId()).orElse(record);
-        } catch (Exception e) {
-            recordService.markFailedForUser(record.getId(), user.getId(), e.getMessage());
-            throw new RuntimeException(e.getMessage(), e);
-        }
+        asyncGenerationExecutor.runGeneration(
+                record.getId(), record.getTaskCode(), null, user.getId(), prompt, generationType, sourceImagePath, model, ownerFolder);
+        return record;
     }
 
     public GenerationRecord getRecordStatus(String keyCode, Integer recordId) {
@@ -111,20 +99,6 @@ public class ImageGenerationService {
         return recordRepository.findTop100ByOrderByCreatedAtDesc();
     }
 
-    private void completeGeneration(GenerationRecord record, String prompt, String generationType,
-                                    String sourceImagePath, String model, String ownerFolder) throws IOException {
-        String imageUrl;
-        if ("img2img".equals(generationType)) {
-            byte[] imageBytes = Files.readAllBytes(resolveSourcePath(sourceImagePath));
-            imageUrl = imageApiClient.imageEdit(prompt, imageBytes, model);
-        } else {
-            imageUrl = imageApiClient.textToImage(prompt, model, TEXT2IMG_FALLBACKS);
-        }
-
-        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, record.getTaskCode(), ownerFolder);
-        recordService.markCompleted(record.getId(), backup.imagePath());
-    }
-
     private GenerationRecord normalizeCompletedRecord(GenerationRecord record) {
         if ("processing".equals(record.getStatus())
                 && record.getImagePath() != null
@@ -150,23 +124,26 @@ public class ImageGenerationService {
         return saveSourceImage(decodeBase64Image(sourceImageBase64), ownerFolder);
     }
 
-    private byte[] decodeBase64Image(String base64) {
+    private DecodedImage decodeBase64Image(String base64) {
         String data = base64;
+        String mediaType = "image/png";
         if (base64.contains(",")) {
+            String header = base64.substring(0, base64.indexOf(","));
+            mediaType = parseImageMediaType(header);
             data = base64.substring(base64.indexOf(",") + 1);
         }
-        return Base64.getDecoder().decode(data);
+        return new DecodedImage(Base64.getDecoder().decode(data), mediaType, extensionForMediaType(mediaType));
     }
 
-    private String saveSourceImage(byte[] imageBytes, String ownerFolder) {
+    private String saveSourceImage(DecodedImage image, String ownerFolder) {
         try {
-            String fileName = "src_" + java.util.UUID.randomUUID() + ".png";
+            String fileName = "src_" + java.util.UUID.randomUUID() + "." + image.extension();
             Path dir = ownerFolder == null || ownerFolder.isBlank()
                     ? storageConfig.getSourcesDir()
                     : storageConfig.getSourcesDir().resolve(ownerFolder);
             Files.createDirectories(dir);
             Path filePath = dir.resolve(fileName);
-            Files.write(filePath, imageBytes);
+            Files.write(filePath, image.bytes());
             return ownerFolder == null || ownerFolder.isBlank()
                     ? filePath.toString()
                     : "sources/" + ownerFolder + "/" + fileName;
@@ -175,11 +152,77 @@ public class ImageGenerationService {
         }
     }
 
+    private String parseImageMediaType(String dataUrlHeader) {
+        String header = dataUrlHeader == null ? "" : dataUrlHeader.toLowerCase();
+        if (header.contains("image/jpeg") || header.contains("image/jpg")) {
+            return "image/jpeg";
+        }
+        if (header.contains("image/webp")) {
+            return "image/webp";
+        }
+        if (header.contains("image/png")) {
+            return "image/png";
+        }
+        return "image/png";
+    }
+
+    private String extensionForMediaType(String mediaType) {
+        return switch (mediaType) {
+            case "image/jpeg" -> "jpg";
+            case "image/webp" -> "webp";
+            default -> "png";
+        };
+    }
+
+    private String detectImageMediaType(Path path, byte[] bytes) {
+        String byMagic = detectImageMediaType(bytes);
+        if (byMagic != null) {
+            return byMagic;
+        }
+        try {
+            String probed = Files.probeContentType(path);
+            if (probed != null && probed.startsWith("image/")) {
+                return probed;
+            }
+        } catch (IOException ignored) {
+        }
+        return "image/png";
+    }
+
+    private String detectImageMediaType(byte[] bytes) {
+        if (bytes == null || bytes.length < 12) {
+            return null;
+        }
+        if ((bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8) {
+            return "image/jpeg";
+        }
+        if ((bytes[0] & 0xff) == 0x89
+                && bytes[1] == 0x50
+                && bytes[2] == 0x4e
+                && bytes[3] == 0x47) {
+            return "image/png";
+        }
+        if (bytes[0] == 'R'
+                && bytes[1] == 'I'
+                && bytes[2] == 'F'
+                && bytes[3] == 'F'
+                && bytes[8] == 'W'
+                && bytes[9] == 'E'
+                && bytes[10] == 'B'
+                && bytes[11] == 'P') {
+            return "image/webp";
+        }
+        return null;
+    }
+
     private Path resolveSourcePath(String sourceImagePath) {
         Path path = Path.of(sourceImagePath);
         if (path.isAbsolute()) {
             return path;
         }
         return storageConfig.getBackupDir().resolve(sourceImagePath).normalize();
+    }
+
+    private record DecodedImage(byte[] bytes, String mediaType, String extension) {
     }
 }

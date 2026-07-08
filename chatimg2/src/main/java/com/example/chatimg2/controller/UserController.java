@@ -84,7 +84,7 @@ public class UserController {
                         request.getSourceImage(),
                         request.getModel());
             }
-            return ApiResponse.success("生成成功", record);
+            return ApiResponse.success("任务已提交，正在生成中", record);
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
         }

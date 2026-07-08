@@ -11,5 +11,4 @@ public interface ActivationKeyRepository extends JpaRepository<ActivationKey, In
     boolean existsByKeyCode(String keyCode);
     List<ActivationKey> findAllByUserIdOrderByCreatedAtDesc(Integer userId);
     List<ActivationKey> findAllByUserEmailOrderByCreatedAtDesc(String userEmail);
-    List<ActivationKey> findAllByUserEmailIgnoreCaseOrderByCreatedAtDesc(String userEmail);
 }

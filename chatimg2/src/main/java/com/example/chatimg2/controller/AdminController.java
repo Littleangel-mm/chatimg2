@@ -17,6 +17,7 @@ import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.SecureRandom;
@@ -30,6 +31,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
+@Slf4j
 public class AdminController {
 
     private final AdminService adminService;
@@ -63,11 +65,21 @@ public class AdminController {
 
     @GetMapping("/users")
     public ApiResponse<List<AdminUserDto>> listUsers(HttpServletRequest request) {
-        authService.requireAdmin(request);
-        List<AdminUserDto> users = userRepository.findAllByOrderByCreatedAtDesc().stream()
-                .map(this::toUserDto)
-                .collect(Collectors.toList());
-        return ApiResponse.success(users);
+        try {
+            authService.requireAdmin(request);
+        } catch (RuntimeException e) {
+            return ApiResponse.error(401, e.getMessage());
+        }
+
+        try {
+            List<AdminUserDto> users = userRepository.findAllByOrderByCreatedAtDesc().stream()
+                    .map(this::toUserDto)
+                    .collect(Collectors.toList());
+            return ApiResponse.success(users);
+        } catch (RuntimeException e) {
+            log.warn("Admin user list failed", e);
+            return ApiResponse.error(500, "用户列表加载失败，请稍后重试");
+        }
     }
 
     @PostMapping("/users/{id}/reset-password")
@@ -144,7 +156,12 @@ public class AdminController {
     private AdminUserDto toUserDto(UserAccount user) {
         List<String> boundKeys = new ArrayList<>();
         if (user.getEmail() != null && !user.getEmail().isBlank()) {
-            keyService.getBoundKeysByUser(user).forEach(key -> boundKeys.add(key.getKeyCode()));
+            try {
+                keyService.getBoundKeysByUser(user).forEach(key -> boundKeys.add(key.getKeyCode()));
+            } catch (RuntimeException e) {
+                log.warn("Failed to load bound keys for user {}", user.getEmail(), e);
+                boundKeys.clear();
+            }
         }
         return new AdminUserDto(
                 user.getId(),

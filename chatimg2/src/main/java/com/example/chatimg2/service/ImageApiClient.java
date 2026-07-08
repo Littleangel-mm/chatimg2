@@ -129,11 +129,43 @@ public class ImageApiClient {
     }
 
     public String imageEdit(String prompt, byte[] imageBytes, String model) {
+        return imageEdit(prompt, imageBytes, "image/png", "source.png", model, List.of());
+    }
+
+    public String imageEdit(String prompt, byte[] imageBytes, String requestedModel, List<String> fallbacks) {
+        return imageEdit(prompt, imageBytes, "image/png", "source.png", requestedModel, fallbacks);
+    }
+
+    public String imageEdit(String prompt, byte[] imageBytes, String imageMediaType, String fileName,
+                            String requestedModel, List<String> fallbacks) {
+        RuntimeException lastError = null;
+        List<String> models = buildImageEditModels(requestedModel, fallbacks);
+        for (int i = 0; i < models.size(); i++) {
+            String model = models.get(i);
+            try {
+                return submitImageEdit(prompt, imageBytes, imageMediaType, fileName, model);
+            } catch (RuntimeException e) {
+                lastError = e;
+                boolean hasNext = i < models.size() - 1;
+                if (hasNext && (isModelNotFound(e) || isBadResponseBody(e) || isServerApiError(e) || isTimeoutError(e))) {
+                    log.warn("Img2img model {} failed, trying next...", model);
+                    continue;
+                }
+                throw new RuntimeException("图生图请求失败: " + e.getMessage(), e);
+            }
+        }
+        throw new RuntimeException("图生图请求失败: " + (lastError != null ? lastError.getMessage() : "unknown"));
+    }
+
+    private String submitImageEdit(String prompt, byte[] imageBytes, String imageMediaType,
+                                   String fileName, String model) {
         try {
-            RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse("image/png"));
+            String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
+            String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
+            RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
             MultipartBody body = new MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
-                    .addFormDataPart("image", "source.png", fileBody)
+                    .addFormDataPart("image", uploadName, fileBody)
                     .addFormDataPart("prompt", prompt)
                     .addFormDataPart("model", model)
                     .addFormDataPart("n", "1")
@@ -146,12 +178,12 @@ public class ImageApiClient {
                     .post(body)
                     .build();
 
-            log.info("Img2img using model: {}", model);
+            log.info("Img2img using model: {}, mediaType={}", model, mediaType);
             return resolveImageFromSubmit(request);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            throw new RuntimeException("图生图请求失败: " + e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 
@@ -161,6 +193,15 @@ public class ImageApiClient {
             models.add(requestedModel.trim());
         }
         models.add(defaultText2imgModel);
+        models.addAll(fallbacks);
+        return new ArrayList<>(models);
+    }
+
+    private List<String> buildImageEditModels(String requestedModel, List<String> fallbacks) {
+        LinkedHashSet<String> models = new LinkedHashSet<>();
+        if (requestedModel != null && !requestedModel.isBlank()) {
+            models.add(requestedModel.trim());
+        }
         models.addAll(fallbacks);
         return new ArrayList<>(models);
     }
@@ -381,6 +422,30 @@ public class ImageApiClient {
             }
             String msg = current.getMessage();
             if (msg != null && msg.toLowerCase().contains("timeout")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private boolean isBadResponseBody(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && msg.contains("bad_response_body")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private boolean isServerApiError(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && msg.matches(".*API调用失败: 5\\d\\d.*")) {
                 return true;
             }
             current = current.getCause();

@@ -5,6 +5,13 @@ import { useAuthStore } from './auth'
 
 const CACHE_TTL = 30_000
 
+function apiError(e, fallback = '操作失败，请稍后重试') {
+  if (e.response) {
+    return e.response.data?.message || fallback
+  }
+  return e.message || fallback
+}
+
 export const useAdminStore = defineStore('admin', () => {
   const admin = ref(JSON.parse(localStorage.getItem('admin') || 'null'))
   const keys = ref([])
@@ -65,6 +72,8 @@ export const useAdminStore = defineStore('admin', () => {
       if (data.code !== 200) throw new Error(data.message)
       users.value = data.data || []
       return users.value
+    } catch (e) {
+      throw new Error(apiError(e, '用户列表加载失败，请稍后重试'))
     } finally {
       userLoading.value = false
     }

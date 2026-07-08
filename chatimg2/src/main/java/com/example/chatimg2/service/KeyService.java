@@ -48,10 +48,8 @@ public class KeyService {
         LinkedHashMap<Integer, ActivationKey> merged = new LinkedHashMap<>();
         if (user.getEmail() != null && !user.getEmail().isBlank()) {
             String normalizedEmail = normalizeEmail(user.getEmail());
-            keyRepository.findAllByUserEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail)
-                    .forEach(key -> merged.put(key.getId(), key));
             keyRepository.findAllByUserEmailOrderByCreatedAtDesc(normalizedEmail)
-                    .forEach(key -> merged.putIfAbsent(key.getId(), key));
+                    .forEach(key -> merged.put(key.getId(), key));
         }
         keyRepository.findAllByUserIdOrderByCreatedAtDesc(user.getId())
                 .forEach(key -> merged.putIfAbsent(key.getId(), key));
