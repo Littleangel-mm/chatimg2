@@ -102,7 +102,43 @@ public final class DatabaseMigration {
                     ")");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_email_codes_email_scene ON email_verification_codes(email, scene, used, created_at DESC)");
 
-            log.info("Database migration completed (auth, generation_records.*, activation_keys.*, inspiration_prompts)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS chat_conversations (" +
+                    "id SERIAL PRIMARY KEY, " +
+                    "key_id INTEGER, " +
+                    "user_id INTEGER, " +
+                    "user_email VARCHAR(120), " +
+                    "client_id VARCHAR(80), " +
+                    "title VARCHAR(255) NOT NULL DEFAULT '新对话', " +
+                    "conversation_type VARCHAR(20) NOT NULL DEFAULT 'text2img', " +
+                    "creative_brief TEXT, " +
+                    "final_prompt TEXT, " +
+                    "reference_image_path VARCHAR(500), " +
+                    "brief_version INTEGER NOT NULL DEFAULT 1, " +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")");
+            stmt.execute("ALTER TABLE chat_conversations ALTER COLUMN key_id DROP NOT NULL");
+            stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS user_id INTEGER");
+            stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
+            stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS client_id VARCHAR(80)");
+            stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS conversation_type VARCHAR(20) NOT NULL DEFAULT 'text2img'");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_user_id ON chat_conversations(user_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_client_id ON chat_conversations(client_id)");
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS chat_messages (" +
+                    "id SERIAL PRIMARY KEY, " +
+                    "conversation_id INTEGER NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE, " +
+                    "role VARCHAR(20) NOT NULL, " +
+                    "content TEXT, " +
+                    "image_path VARCHAR(500), " +
+                    "generation_record_id INTEGER, " +
+                    "intent VARCHAR(50), " +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)");
+
+            log.info("Database migration completed (auth, generation_records.*, activation_keys.*, inspiration_prompts, chat_*)");
         } catch (SQLException e) {
             throw new IllegalStateException("Database migration failed: " + e.getMessage(), e);
         }

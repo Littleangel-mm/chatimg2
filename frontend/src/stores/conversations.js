@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import api from '../api'
 import { getImageUrl } from '../api'
 
 const STORAGE_PREFIX = 'conversations_'
@@ -18,6 +19,10 @@ function readStored(keyCode) {
 
 function writeStored(keyCode, data) {
   localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
+}
+
+function hasAuthToken() {
+  return !!localStorage.getItem('authToken')
 }
 
 function recordIdEquals(a, b) {
@@ -57,6 +62,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   const sidebarOpen = ref(true)
   const boundKeyCode = ref('')
   const pendingPrompt = ref('')
+  let remoteSyncTimer = null
+  let remoteLoading = false
 
   const activeConversation = computed(() =>
     conversations.value.find(c => c.id === activeId.value) ?? null
@@ -72,6 +79,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       conversations: conversations.value,
       activeId: activeId.value
     })
+    scheduleRemoteSync()
   }
 
   function bindKeyCode(keyCode) {
@@ -88,6 +96,90 @@ export const useConversationsStore = defineStore('conversations', () => {
     activeId.value = null
     if (boundKeyCode.value) {
       localStorage.removeItem(storageKey(boundKeyCode.value))
+    }
+    scheduleRemoteSync()
+  }
+
+  function toRemotePayload() {
+    return {
+      activeId: activeId.value,
+      conversations: conversations.value.map(conv => ({
+        clientId: conv.id,
+        title: conv.title,
+        type: conv.type,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        messages: (conv.messages || []).map(msg => ({
+          clientId: msg.id,
+          role: msg.role,
+          content: msg.content || '',
+          sourceImage: msg.sourceImage && !msg.sourceImage.startsWith('data:') ? msg.sourceImage : null,
+          recordId: msg.recordId || msg.record?.id || null,
+          status: msg.status || msg.record?.status || null,
+          errorMessage: msg.errorMessage || msg.record?.errorMessage || null,
+          createdAt: msg.createdAt
+        }))
+      }))
+    }
+  }
+
+  function applyRemotePayload(payload) {
+    const remoteConversations = payload?.conversations || []
+    if (!remoteConversations.length) return false
+
+    conversations.value = remoteConversations.map(conv => ({
+      id: conv.clientId || uid(),
+      title: conv.title || defaultTitle('', conv.type),
+      type: conv.type === 'img2img' ? 'img2img' : 'text2img',
+      createdAt: conv.createdAt || Date.now(),
+      updatedAt: conv.updatedAt || Date.now(),
+      messages: (conv.messages || []).map(msg => ({
+        id: msg.clientId || uid(),
+        role: msg.role,
+        content: msg.content || '',
+        sourceImage: msg.sourceImage || null,
+        recordId: msg.recordId || null,
+        record: msg.recordId ? { id: msg.recordId, status: msg.status } : null,
+        status: msg.status || null,
+        errorMessage: msg.errorMessage || null,
+        createdAt: msg.createdAt || Date.now()
+      }))
+    }))
+    activeId.value = payload.activeId || conversations.value[0]?.id || null
+    writeStored(boundKeyCode.value, {
+      conversations: conversations.value,
+      activeId: activeId.value
+    })
+    return true
+  }
+
+  function scheduleRemoteSync() {
+    if (remoteLoading || !hasAuthToken()) return
+    clearTimeout(remoteSyncTimer)
+    remoteSyncTimer = setTimeout(() => {
+      syncRemote().catch(() => {})
+    }, 500)
+  }
+
+  async function syncRemote() {
+    if (!hasAuthToken() || remoteLoading) return false
+    const { data } = await api.post('/chat/sync', toRemotePayload())
+    return data.code === 200
+  }
+
+  async function loadRemote() {
+    if (!hasAuthToken() || remoteLoading) return false
+    remoteLoading = true
+    try {
+      const { data } = await api.get('/chat/sync')
+      if (data.code !== 200) return false
+      const applied = applyRemotePayload(data.data)
+      if (!applied && conversations.value.length) {
+        await syncRemote().catch(() => {})
+      }
+      return applied
+    } finally {
+      remoteLoading = false
     }
   }
 
@@ -179,6 +271,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           msg.record = { ...record }
           msg.status = resolveRecordStatus(record)
           msg.errorMessage = record.errorMessage || null
+          attachSourceImagePath(conv, msg, record)
           conv.updatedAt = Date.now()
           changed = true
           matched = true
@@ -194,6 +287,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           pending.record = { ...record }
           pending.status = resolveRecordStatus(record)
           pending.errorMessage = record.errorMessage || null
+          attachSourceImagePath(conv, pending, record)
           conv.updatedAt = Date.now()
           changed = true
         }
@@ -201,6 +295,16 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
 
     if (changed) persist()
+  }
+
+  function attachSourceImagePath(conv, assistantMsg, record) {
+    if (!record?.sourceImagePath) return
+    const index = conv.messages.findIndex(msg => msg.id === assistantMsg.id)
+    if (index <= 0) return
+    const userMsg = conv.messages[index - 1]
+    if (!userMsg || userMsg.role !== 'user') return
+    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return
+    userMsg.sourceImage = record.sourceImagePath
   }
 
   function attachRecordToMessage(messageId, record) {
@@ -395,6 +499,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     importFromHistory,
     imageUrlForMessage,
     setPendingPrompt,
-    consumePendingPrompt
+    consumePendingPrompt,
+    loadRemote,
+    syncRemote
   }
 })

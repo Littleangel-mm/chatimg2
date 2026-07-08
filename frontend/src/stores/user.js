@@ -142,6 +142,7 @@ export const useUserStore = defineStore('user', () => {
         const convStore = useConversationsStore()
         const ownerKey = authStore.user?.email || keyCode.value
         convStore.bindKeyCode(ownerKey)
+        await convStore.loadRemote().catch(() => false)
         convStore.importFromHistory(history.value, ownerKey)
         convStore.syncFromHistoryRecords(history.value)
       } catch {
