@@ -34,6 +34,8 @@ const avatarText = computed(() => {
 })
 
 const showAccountMenu = ref(false)
+const showContactMenu = ref(false)
+const adminContactImage = 'img/admin/wechat--admin.jpg'
 
 const accountInfo = computed(() => ({
   email: authStore.user?.email || '未登录',
@@ -112,6 +114,12 @@ function openKeyModal() {
 
 function toggleAccountMenu() {
   showAccountMenu.value = !showAccountMenu.value
+  if (showAccountMenu.value) showContactMenu.value = false
+}
+
+function toggleContactMenu() {
+  showContactMenu.value = !showContactMenu.value
+  if (showContactMenu.value) showAccountMenu.value = false
 }
 
 async function send() {
@@ -215,6 +223,9 @@ onActivated(applyPendingPrompt)
         </span>
       </div>
       <div class="avatar-wrap">
+        <button class="notice-btn" title="联系客服" aria-label="联系客服" @click.stop="toggleContactMenu">
+          联系客服
+        </button>
         <button class="user-avatar" :title="authStore.user?.email || '账号信息'" aria-label="账号信息" @click.stop="toggleAccountMenu">
           {{ avatarText }}
         </button>
@@ -249,6 +260,17 @@ onActivated(applyPendingPrompt)
         </Transition>
       </div>
     </header>
+    <Transition name="fade">
+      <div v-if="showContactMenu" class="contact-overlay" @click="showContactMenu = false">
+        <div class="contact-popover">
+          <div class="contact-title">
+            <strong>联系客服</strong>
+            <span>扫码添加微信</span>
+          </div>
+          <img :src="adminContactImage" alt="客服微信" class="contact-image" />
+        </div>
+      </div>
+    </Transition>
 
     <div v-if="!conversation()" class="welcome">
       <div class="welcome-inner">
@@ -396,6 +418,73 @@ onActivated(applyPendingPrompt)
 
 .avatar-wrap {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notice-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+}
+
+.notice-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.contact-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(54, 31, 37, 0.14);
+}
+
+.contact-popover {
+  width: min(300px, 100%);
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 249, 247, 0.98);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.contact-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.contact-title strong {
+  font-size: 14px;
+  color: var(--text-strong);
+}
+
+.contact-title span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.contact-image {
+  width: 100%;
+  display: block;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
 }
 
 .account-popover {
