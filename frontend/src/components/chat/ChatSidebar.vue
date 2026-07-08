@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConversationsStore } from '../../stores/conversations'
@@ -38,6 +38,11 @@ function remove(id) {
   convStore.deleteConversation(id)
 }
 
+function openKeyModal() {
+  window.dispatchEvent(new CustomEvent('open-key-modal'))
+  emit('close-mobile')
+}
+
 async function logout() {
   await authStore.logout()
   userStore.logout()
@@ -48,20 +53,20 @@ async function logout() {
 <template>
   <aside class="sidebar" :class="{ collapsed: !convStore.sidebarOpen }">
     <div class="sidebar-top">
-      <button class="sidebar-toggle" title="收起侧边栏" @click="convStore.sidebarOpen = !convStore.sidebarOpen">
-        ☰
+      <button class="sidebar-toggle" title="&#x6536;&#x8D77;&#x4FA7;&#x8FB9;&#x680F;" @click="convStore.sidebarOpen = !convStore.sidebarOpen">
+        &#9776;
       </button>
       <span class="brand">img2.ai</span>
     </div>
 
     <div class="new-actions">
-      <button class="new-btn" @click="newChat('text2img')">新对话</button>
-      <button class="new-btn secondary" @click="newChat('img2img')">新图生图</button>
-      <button class="new-btn gallery" @click="openInspiration">灵感画廊</button>
+      <button class="new-btn" @click="newChat('text2img')">&#x65B0;&#x5BF9;&#x8BDD;</button>
+      <button class="new-btn secondary" @click="newChat('img2img')">&#x65B0;&#x56FE;&#x751F;&#x56FE;</button>
+      <button class="new-btn gallery" @click="openInspiration">&#x7075;&#x611F;&#x753B;&#x5ECA;</button>
     </div>
 
     <div class="conv-list">
-      <p v-if="items.length === 0" class="empty-hint">暂无对话，点击上方开始</p>
+      <p v-if="items.length === 0" class="empty-hint">&#x6682;&#x65E0;&#x5BF9;&#x8BDD;&#xFF0C;&#x70B9;&#x51FB;&#x4E0A;&#x65B9;&#x5F00;&#x59CB;</p>
       <div v-for="conv in items" :key="conv.id" class="conv-item" :class="{ active: conv.id === convStore.activeId }">
         <button type="button" class="conv-body" @click="select(conv.id)">
           <span class="conv-title">{{ conv.title }}</span>
@@ -73,10 +78,10 @@ async function logout() {
     <div class="sidebar-footer">
       <div v-if="userStore.isActivated" class="credits" @click="userStore.syncCreditsFromServer()">
         <span class="dot" />
-        {{ userStore.remainingCredits }} 积分
+        {{ userStore.remainingCredits }} &#x79EF;&#x5206;
       </div>
-      <router-link v-if="authStore.isAdmin" to="/admin/users" class="admin-link">管理后台</router-link>
-      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="logout-link" @click="logout">退出登录</button>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="key-link" @click="openKeyModal">&#x5207;&#x6362;&#x5BC6;&#x94A5;</button>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="logout-link" @click="logout">&#x9000;&#x51FA;&#x767B;&#x5F55;</button>
     </div>
   </aside>
 </template>
@@ -269,16 +274,7 @@ async function logout() {
   background: var(--accent);
 }
 
-.admin-link {
-  font-size: 13px;
-  color: var(--text-muted);
-  padding: 6px 12px;
-}
-
-.admin-link:hover {
-  color: var(--text);
-}
-
+.key-link,
 .logout-link {
   font-size: 13px;
   color: var(--text-muted);
@@ -287,6 +283,7 @@ async function logout() {
   background: transparent;
 }
 
+.key-link:hover,
 .logout-link:hover {
   color: var(--text);
 }

@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.service;
+package com.example.chatimg2.service;
 
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.ActivationKey;

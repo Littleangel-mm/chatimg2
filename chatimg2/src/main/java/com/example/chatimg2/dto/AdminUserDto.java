@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.dto;
+package com.example.chatimg2.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

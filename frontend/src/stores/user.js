@@ -154,6 +154,9 @@ export const useUserStore = defineStore('user', () => {
   async function syncCreditsFromServer() {
     const authStore = useAuthStore()
     if (authStore.isUser) {
+      if (keyCode.value) {
+        await activate(keyCode.value).catch(() => {})
+      }
       await authStore.fetchMe().catch(() => {})
       return true
     }
@@ -177,6 +180,9 @@ export const useUserStore = defineStore('user', () => {
   async function refreshSession() {
     const authStore = useAuthStore()
     if (authStore.isUser) {
+      if (keyCode.value) {
+        await activate(keyCode.value)
+      }
       await authStore.fetchMe()
       await fetchHistory()
       return
@@ -200,7 +206,9 @@ export const useUserStore = defineStore('user', () => {
   function initSession() {
     const authStore = useAuthStore()
     if (authStore.isUser) {
-      fetchHistory().catch(() => {})
+      syncCreditsFromServer()
+        .then(() => fetchHistory())
+        .catch(() => fetchHistory().catch(() => {}))
       return
     }
     if (!keyCode.value) return

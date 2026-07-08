@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.service;
+package com.example.chatimg2.service;
 
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.UserAccount;
@@ -10,6 +10,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -44,13 +45,17 @@ public class KeyService {
         if (user == null) {
             return List.of();
         }
+        LinkedHashMap<Integer, ActivationKey> merged = new LinkedHashMap<>();
         if (user.getEmail() != null && !user.getEmail().isBlank()) {
-            List<ActivationKey> byEmail = keyRepository.findAllByUserEmailOrderByCreatedAtDesc(user.getEmail());
-            if (!byEmail.isEmpty()) {
-                return byEmail;
-            }
+            String normalizedEmail = normalizeEmail(user.getEmail());
+            keyRepository.findAllByUserEmailIgnoreCaseOrderByCreatedAtDesc(normalizedEmail)
+                    .forEach(key -> merged.put(key.getId(), key));
+            keyRepository.findAllByUserEmailOrderByCreatedAtDesc(normalizedEmail)
+                    .forEach(key -> merged.putIfAbsent(key.getId(), key));
         }
-        return keyRepository.findAllByUserIdOrderByCreatedAtDesc(user.getId());
+        keyRepository.findAllByUserIdOrderByCreatedAtDesc(user.getId())
+                .forEach(key -> merged.putIfAbsent(key.getId(), key));
+        return List.copyOf(merged.values());
     }
 
     public ActivationKey createKey(Integer totalCredits) {
@@ -118,7 +123,7 @@ public class KeyService {
             throw new RuntimeException("该密钥已绑定其他账号");
         }
         key.setUserId(user.getId());
-        key.setUserEmail(user.getEmail());
+        key.setUserEmail(normalizeEmail(user.getEmail()));
         return keyRepository.save(key);
     }
 
@@ -140,5 +145,9 @@ public class KeyService {
                 .orElseThrow(() -> new RuntimeException("密钥不存在"));
         key.setUsedCredits(Math.max(0, key.getUsedCredits() - amount));
         keyRepository.save(key);
+    }
+
+    private String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase();
     }
 }

@@ -121,7 +121,7 @@ function goHome() {
 <template>
   <div class="insp-page">
     <header class="insp-topbar">
-      <button class="back-btn" @click="goHome">← 返回创作</button>
+      <button class="back-btn" @click="goHome">返回创作</button>
       <div class="insp-heading">
         <h1>灵感画廊</h1>
         <span v-if="store.total" class="insp-count">{{ store.total }} 个灵感</span>

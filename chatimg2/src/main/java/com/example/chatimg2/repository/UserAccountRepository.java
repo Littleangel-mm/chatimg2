@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.repository;
+package com.example.chatimg2.repository;
 
 import com.example.chatimg2.entity.UserAccount;
 import org.springframework.data.jpa.repository.JpaRepository;

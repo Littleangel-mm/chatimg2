@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.repository;
+package com.example.chatimg2.repository;
 
 import com.example.chatimg2.entity.ActivationKey;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -11,4 +11,5 @@ public interface ActivationKeyRepository extends JpaRepository<ActivationKey, In
     boolean existsByKeyCode(String keyCode);
     List<ActivationKey> findAllByUserIdOrderByCreatedAtDesc(Integer userId);
     List<ActivationKey> findAllByUserEmailOrderByCreatedAtDesc(String userEmail);
+    List<ActivationKey> findAllByUserEmailIgnoreCaseOrderByCreatedAtDesc(String userEmail);
 }

@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, onActivated, onUnmounted, defineOptions } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAdminStore } from '../../stores/admin'
@@ -88,7 +88,7 @@ async function addKey() {
     const key = await adminStore.createKey(newCredits.value)
     message.value = `密钥已生成：${key.keyCode}`
     newCredits.value = 100
-    setTimeout(() => message.value = '', 4000)
+    setTimeout(() => (message.value = ''), 4000)
   } catch (e) {
     error.value = e.response?.data?.message || e.message
   } finally {
@@ -99,7 +99,7 @@ async function addKey() {
 function copyKey(code) {
   navigator.clipboard.writeText(code)
   message.value = '已复制密钥'
-  setTimeout(() => message.value = '', 1500)
+  setTimeout(() => (message.value = ''), 1500)
 }
 
 function startEdit(key) {
@@ -119,7 +119,7 @@ async function saveEdit() {
     await adminStore.updateKey(editId.value, newTotal)
     editId.value = null
     message.value = '更新成功'
-    setTimeout(() => message.value = '', 2000)
+    setTimeout(() => (message.value = ''), 2000)
   } catch (e) {
     error.value = e.response?.data?.message || e.message
   }
@@ -130,18 +130,18 @@ async function resetUsed(id) {
   try {
     await adminStore.resetUsedCredits(id)
     message.value = '已用积分已重置'
-    setTimeout(() => message.value = '', 2000)
+    setTimeout(() => (message.value = ''), 2000)
   } catch (e) {
     error.value = e.response?.data?.message || e.message
   }
 }
 
 async function removeKey(id) {
-  if (!confirm('确定删除此密钥？相关生成记录也会删除。')) return
+  if (!confirm('确定删除此密钥？相关生成记录也会被删除。')) return
   try {
     await adminStore.deleteKey(id)
     message.value = '删除成功'
-    setTimeout(() => message.value = '', 2000)
+    setTimeout(() => (message.value = ''), 2000)
   } catch (e) {
     error.value = e.response?.data?.message || e.message
   }
@@ -162,6 +162,7 @@ function goPage(p) {
           <p>管理员：{{ adminStore.admin?.username }} · 共 {{ adminStore.total }} 条</p>
         </div>
         <div class="header-actions">
+          <router-link to="/admin/users" class="btn-ghost tap">用户管理</router-link>
           <router-link to="/" class="btn-ghost tap">返回首页</router-link>
           <button class="btn-ghost tap" @click="logout">退出登录</button>
         </div>
@@ -188,9 +189,7 @@ function goPage(p) {
             <h3>灵感画廊</h3>
             <p class="add-desc">
               爬取外部 prompt 库到本地
-              <span v-if="inspStats?.stats">
-                · 当前：图片 {{ inspStats.stats.image }} · 视频 {{ inspStats.stats.video }}
-              </span>
+              <span v-if="inspStats?.stats"> · 当前：图片 {{ inspStats.stats.image }} · 视频 {{ inspStats.stats.video }}</span>
             </p>
           </div>
           <div class="add-form">
@@ -223,6 +222,7 @@ function goPage(p) {
               <th>剩余</th>
               <th>状态</th>
               <th>创建时间</th>
+              <th>绑定邮箱</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -242,11 +242,10 @@ function goPage(p) {
                 <template v-else>{{ Math.max(0, key.totalCredits - key.usedCredits) }}</template>
               </td>
               <td>
-                <span :class="['status', key.status === 1 ? 'active' : 'disabled']">
-                  {{ key.status === 1 ? '启用' : '禁用' }}
-                </span>
+                <span :class="['status', key.status === 1 ? 'active' : 'disabled']">{{ key.status === 1 ? '启用' : '禁用' }}</span>
               </td>
               <td class="time">{{ key.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
+              <td>{{ key.userEmail || '-' }}</td>
               <td class="actions">
                 <template v-if="editId === key.id">
                   <button class="btn-sm save" @click="saveEdit">保存</button>
@@ -260,25 +259,15 @@ function goPage(p) {
               </td>
             </tr>
             <tr v-if="adminStore.keys.length === 0">
-              <td colspan="8" class="empty">暂无密钥，点击上方添加</td>
+              <td colspan="9" class="empty">暂无密钥，点击上方添加</td>
             </tr>
           </tbody>
         </table>
 
         <div v-if="!showSkeleton && adminStore.totalPages > 0" class="pagination">
-          <button class="page-btn tap" :disabled="adminStore.page === 0 || adminStore.tableLoading" @click="goPage(adminStore.page - 1)">
-            上一页
-          </button>
-          <span class="page-info">
-            第 {{ pageDisplay }} / {{ adminStore.totalPages }} 页
-          </span>
-          <button
-            class="page-btn tap"
-            :disabled="adminStore.page >= adminStore.totalPages - 1 || adminStore.tableLoading"
-            @click="goPage(adminStore.page + 1)"
-          >
-            下一页
-          </button>
+          <button class="page-btn tap" :disabled="adminStore.page === 0 || adminStore.tableLoading" @click="goPage(adminStore.page - 1)">上一页</button>
+          <span class="page-info">第 {{ pageDisplay }} / {{ adminStore.totalPages }} 页</span>
+          <button class="page-btn tap" :disabled="adminStore.page >= adminStore.totalPages - 1 || adminStore.tableLoading" @click="goPage(adminStore.page + 1)">下一页</button>
         </div>
       </div>
     </div>
@@ -287,7 +276,6 @@ function goPage(p) {
 
 <style scoped>
 .admin-page { padding: 40px 0 80px; }
-
 .page-header {
   display: flex;
   align-items: center;
@@ -296,13 +284,10 @@ function goPage(p) {
   flex-wrap: wrap;
   gap: 16px;
 }
-
 .page-header h1 { font-size: 28px; margin-bottom: 4px; }
 .page-header p { color: var(--text-muted); font-size: 14px; }
 .header-actions { display: flex; gap: 8px; }
-
 .add-card { padding: 24px; margin-bottom: 24px; }
-
 .add-row {
   display: flex;
   align-items: center;
@@ -310,12 +295,9 @@ function goPage(p) {
   flex-wrap: wrap;
   gap: 16px;
 }
-
 .add-card h3 { font-size: 16px; margin-bottom: 4px; }
 .add-desc { color: var(--text-muted); font-size: 13px; }
-
 .add-form { display: flex; gap: 12px; align-items: center; }
-
 .input {
   padding: 10px 14px;
   background: var(--bg-input);
@@ -325,19 +307,14 @@ function goPage(p) {
   font-size: 14px;
   outline: none;
 }
-
 .input-sm { width: 100px; }
 .input-xs { width: 80px; padding: 4px 8px; }
 .input:focus { border-color: var(--accent); }
-
 .error { color: var(--danger); margin-bottom: 12px; font-size: 14px; }
 .success { color: var(--success); margin-bottom: 12px; font-size: 14px; }
-
 .table-wrap { overflow-x: auto; transition: opacity 0.15s; }
 .table-wrap.loading { opacity: 0.65; pointer-events: none; }
-
 .skeleton-wrap { padding: 16px; }
-
 .skeleton-row {
   height: 48px;
   margin-bottom: 8px;
@@ -346,57 +323,21 @@ function goPage(p) {
   background-size: 200% 100%;
   animation: shimmer 1s infinite;
 }
-
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-
-th, td {
-  padding: 14px 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-th {
-  color: var(--text-muted);
-  font-weight: 500;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-code {
-  background: var(--bg-input);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-.btn-copy {
-  margin-left: 6px;
-  background: none;
-  font-size: 14px;
-  opacity: 0.5;
-  transition: opacity 0.2s;
-}
-
+th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+code { background: var(--bg-input); padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+.btn-copy { margin-left: 6px; background: none; font-size: 14px; opacity: 0.5; transition: opacity 0.2s; }
 .btn-copy:hover { opacity: 1; }
-
-.status {
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-}
-
+.status { padding: 2px 10px; border-radius: 999px; font-size: 12px; }
 .status.active { background: rgba(138, 169, 127, 0.18); color: var(--success); }
 .status.disabled { background: rgba(210, 115, 138, 0.16); color: var(--danger); }
-
 .time { color: var(--text-muted); font-size: 13px; white-space: nowrap; }
 .actions { display: flex; gap: 6px; white-space: nowrap; }
-
 .btn-sm {
   padding: 5px 12px;
   border-radius: 999px;
@@ -405,35 +346,14 @@ code {
   border: 1px solid var(--border);
   color: var(--text);
 }
-
 .btn-sm:hover { background: var(--hover); }
 .btn-sm.save { background: var(--accent-soft); border-color: var(--accent-border); color: var(--accent-hover); }
 .btn-sm.danger { color: var(--danger); }
 .btn-sm.danger:hover { background: rgba(210, 115, 138, 0.14); }
-
 .empty { text-align: center; color: var(--text-muted); padding: 40px !important; }
-
-.pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 20px;
-  border-top: 1px solid var(--border);
-}
-
-.page-btn {
-  padding: 8px 18px;
-  border-radius: 999px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 14px;
-  transition: background 0.12s, transform 0.1s;
-}
-
+.pagination { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 20px; border-top: 1px solid var(--border); }
+.page-btn { padding: 8px 18px; border-radius: 999px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); font-size: 14px; }
 .page-btn:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-border); }
 .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-
 .page-info { color: var(--text-muted); font-size: 14px; }
 </style>

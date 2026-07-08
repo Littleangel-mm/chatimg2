@@ -1,12 +1,14 @@
 <script setup>
-import { ref, watch, nextTick, onMounted, onActivated } from 'vue'
+import { ref, watch, nextTick, onMounted, onActivated, computed } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
+import { useAuthStore } from '../../stores/auth'
 import { compressImage } from '../../utils/image'
 import ChatMessage from './ChatMessage.vue'
 
 const convStore = useConversationsStore()
 const userStore = useUserStore()
+const authStore = useAuthStore()
 
 const prompt = ref('')
 const model = ref('gpt-image-2')
@@ -25,6 +27,21 @@ const models = [
 ]
 
 const conversation = () => convStore.activeConversation
+
+const avatarText = computed(() => {
+  const source = authStore.user?.email || authStore.user?.username || userStore.keyCode || 'U'
+  return source.trim().charAt(0).toUpperCase() || 'U'
+})
+
+const showAccountMenu = ref(false)
+
+const accountInfo = computed(() => ({
+  email: authStore.user?.email || '未登录',
+  name: authStore.user?.username || authStore.user?.email?.split('@')[0] || '未设置',
+  role: authStore.user?.role === 'ADMIN' ? '管理员' : authStore.user?.role === 'USER' ? '用户' : '未登录',
+  credits: authStore.user?.remainingCredits ?? userStore.remainingCredits,
+  keyCode: authStore.isAdmin ? '管理员不绑定密钥' : userStore.keyCode || '未激活'
+}))
 
 watch(
   () => convStore.activeConversation?.messages?.length,
@@ -67,7 +84,7 @@ async function onFileChange(e) {
   const file = e.target.files?.[0]
   if (!file) return
   if (!file.type.startsWith('image/')) {
-    error.value = '请上传图片文件'
+    error.value = '\u8bf7\u4e0a\u4f20\u56fe\u7247\u6587\u4ef6'
     return
   }
   uploading.value = true
@@ -77,7 +94,7 @@ async function onFileChange(e) {
     sourcePreview.value = compressed
     sourceBase64.value = compressed
   } catch {
-    error.value = '图片处理失败'
+    error.value = '\u56fe\u7247\u5904\u7406\u5931\u8d25'
   } finally {
     uploading.value = false
     e.target.value = ''
@@ -93,6 +110,10 @@ function openKeyModal() {
   window.dispatchEvent(new CustomEvent('open-key-modal'))
 }
 
+function toggleAccountMenu() {
+  showAccountMenu.value = !showAccountMenu.value
+}
+
 async function send() {
   if (!userStore.isActivated) {
     openKeyModal()
@@ -101,7 +122,7 @@ async function send() {
 
   const text = prompt.value.trim()
   if (!text) {
-    error.value = '请输入描述'
+    error.value = '\u8bf7\u8f93\u5165\u63cf\u8ff0'
     return
   }
 
@@ -109,7 +130,7 @@ async function send() {
   const isImg2img = conv.type === 'img2img'
 
   if (isImg2img && !sourceBase64.value) {
-    error.value = '请先上传参考图片'
+    error.value = '\u8bf7\u5148\u4e0a\u4f20\u53c2\u8003\u56fe\u7247'
     return
   }
 
@@ -135,7 +156,7 @@ async function send() {
     convStore.attachRecordToMessage(exchange?.assistantMsg?.id, record)
     if (isImg2img) clearSource()
   } catch (e) {
-    const msg = e.response?.data?.message || e.message || '生成失败'
+    const msg = e.response?.data?.message || e.message || '\u751f\u6210\u5931\u8d25'
     convStore.failLatestAssistant(msg)
     error.value = msg
   }
@@ -185,33 +206,64 @@ onActivated(applyPendingPrompt)
         class="menu-btn"
         @click="convStore.sidebarOpen = true"
       >
-        ☰
+        &#9776;
       </button>
       <div class="header-title">
         <h1>{{ conversation()?.title || 'img2.ai' }}</h1>
         <span v-if="conversation()" class="type-badge">
-          {{ conversation().type === 'img2img' ? '图生图' : '文生图' }}
+          {{ conversation().type === 'img2img' ? '\u56fe\u751f\u56fe' : '\u6587\u751f\u56fe' }}
         </span>
       </div>
-      <button class="key-btn" @click="openKeyModal">
-        {{ userStore.isActivated ? '切换密钥' : '激活密钥' }}
-      </button>
+      <div class="avatar-wrap">
+        <button class="user-avatar" :title="authStore.user?.email || '账号信息'" aria-label="账号信息" @click.stop="toggleAccountMenu">
+          {{ avatarText }}
+        </button>
+        <Transition name="fade">
+          <div v-if="showAccountMenu" class="account-popover" @click.stop>
+            <div class="account-top">
+              <div class="account-avatar">{{ avatarText }}</div>
+              <div class="account-meta">
+                <strong>{{ accountInfo.name }}</strong>
+                <span>{{ accountInfo.role }}</span>
+              </div>
+            </div>
+            <dl class="account-list">
+              <div>
+                <dt>邮箱</dt>
+                <dd>{{ accountInfo.email }}</dd>
+              </div>
+              <div>
+                <dt>身份</dt>
+                <dd>{{ accountInfo.role }}</dd>
+              </div>
+              <div>
+                <dt>积分</dt>
+                <dd>{{ accountInfo.credits }}</dd>
+              </div>
+              <div>
+                <dt>密钥</dt>
+                <dd>{{ accountInfo.keyCode }}</dd>
+              </div>
+            </dl>
+          </div>
+        </Transition>
+      </div>
     </header>
 
     <div v-if="!conversation()" class="welcome">
       <div class="welcome-inner">
-        <h2>今天想创作什么？</h2>
-        <p>从左侧新建对话，或开始文生图 / 图生图</p>
+        <h2>&#x4ECA;&#x5929;&#x60F3;&#x521B;&#x4F5C;&#x4EC0;&#x4E48;&#xFF1F;</h2>
+        <p>&#x4ECE;&#x5DE6;&#x4FA7;&#x65B0;&#x5EFA;&#x5BF9;&#x8BDD;&#xFF0C;&#x6216;&#x5F00;&#x59CB;&#x6587;&#x751F;&#x56FE; / &#x56FE;&#x751F;&#x56FE;</p>
         <div class="welcome-actions">
-          <button class="welcome-btn" @click="convStore.createConversation('text2img')">新对话</button>
-          <button class="welcome-btn" @click="convStore.createConversation('img2img')">新图生图</button>
+          <button class="welcome-btn" @click="convStore.createConversation('text2img')">&#x65B0;&#x5BF9;&#x8BDD;</button>
+          <button class="welcome-btn" @click="convStore.createConversation('img2img')">&#x65B0;&#x56FE;&#x751F;&#x56FE;</button>
         </div>
       </div>
     </div>
 
     <div v-else ref="messagesEl" class="messages">
       <div v-if="conversation().messages.length === 0" class="empty-chat">
-        <p>{{ conversation().type === 'img2img' ? '上传参考图并描述想要的效果' : '描述你想生成的画面' }}</p>
+        <p>{{ conversation().type === 'img2img' ? '\u4e0a\u4f20\u53c2\u8003\u56fe\u5e76\u63cf\u8ff0\u60f3\u8981\u7684\u6548\u679c' : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762' }}</p>
       </div>
       <ChatMessage
         v-for="msg in conversation().messages"
@@ -223,14 +275,14 @@ onActivated(applyPendingPrompt)
     <div v-if="conversation()" class="input-area">
       <div class="input-card">
         <div v-if="conversation().type === 'img2img'" class="upload-row">
-          <div v-if="uploading" class="upload-chip loading">压缩中…</div>
+          <div v-if="uploading" class="upload-chip loading">&#x538B;&#x7F29;&#x4E2D;...</div>
           <div v-else-if="sourcePreview" class="upload-chip">
-            <img :src="sourcePreview" alt="参考图" />
-            <button class="clear" @click="clearSource">✕</button>
+            <img :src="sourcePreview" alt="&#x53C2;&#x8003;&#x56FE;" />
+            <button class="clear" @click="clearSource">&times;</button>
           </div>
           <label v-else class="upload-chip add">
             <input type="file" accept="image/*" hidden @change="onFileChange" />
-            + 参考图
+            + &#x53C2;&#x8003;&#x56FE;
           </label>
         </div>
 
@@ -240,13 +292,13 @@ onActivated(applyPendingPrompt)
             v-model="prompt"
             class="prompt"
             :placeholder="conversation().type === 'img2img'
-              ? '描述如何变换这张图片…'
-              : '描述你想生成的画面…'"
+              ? '\u63cf\u8ff0\u5982\u4f55\u53d8\u6362\u8fd9\u5f20\u56fe\u7247...'
+              : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762...'"
             rows="1"
             @keydown="onKeydown"
             @input="resizePrompt"
           />
-          <select v-model="model" class="model-select" title="模型">
+          <select v-model="model" class="model-select" title="&#x6A21;&#x578B;">
             <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
           </select>
           <button
@@ -254,13 +306,13 @@ onActivated(applyPendingPrompt)
             :disabled="userStore.generating || uploading || !prompt.trim()"
             @click="send"
           >
-            <span v-if="userStore.generating" class="spin">⟳</span>
-            <span v-else>↑</span>
+            <span v-if="userStore.generating">发送中...</span>
+            <span v-else>发送</span>
           </button>
         </div>
 
         <p v-if="error" class="error">{{ error }}</p>
-        <p class="hint">Enter 发送 · Shift+Enter 换行 · 每次 20 积分</p>
+        <p class="hint">Enter &#x53D1;&#x9001; · Shift+Enter &#x6362;&#x884C; · &#x6BCF;&#x6B21; 20 &#x79EF;&#x5206;</p>
       </div>
     </div>
   </div>
@@ -320,18 +372,103 @@ onActivated(applyPendingPrompt)
   flex-shrink: 0;
 }
 
-.key-btn {
-  padding: 8px 16px;
-  border-radius: 999px;
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
   background: var(--accent-soft);
   border: 1px solid var(--accent-border);
   color: var(--accent-hover);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
 }
 
-.key-btn:hover {
+.user-avatar:hover {
   background: var(--accent);
   color: #fff;
+}
+
+
+.avatar-wrap {
+  position: relative;
+}
+
+.account-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 20;
+  min-width: 260px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 249, 247, 0.98);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.account-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.account-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.account-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-meta strong {
+  font-size: 15px;
+  color: var(--text-strong);
+}
+
+.account-meta span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.account-list {
+  display: grid;
+  gap: 10px;
+}
+
+.account-list div {
+  display: grid;
+  gap: 2px;
+}
+
+.account-list dt {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.account-list dd {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .welcome {
@@ -500,17 +637,17 @@ onActivated(applyPendingPrompt)
 }
 
 .send-btn {
-  width: 42px;
+  min-width: 84px;
   height: 42px;
+  padding: 0 18px;
   border-radius: 12px;
   background: var(--gradient);
   color: #fff;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
   box-shadow: 0 6px 16px rgba(224, 155, 176, 0.4);
 }
-
 .send-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;

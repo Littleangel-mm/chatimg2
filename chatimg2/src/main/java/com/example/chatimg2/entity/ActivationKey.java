@@ -1,4 +1,4 @@
-﻿package com.example.chatimg2.entity;
+package com.example.chatimg2.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;

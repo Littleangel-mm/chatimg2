@@ -1,4 +1,5 @@
-﻿import { ref, onMounted, onUnmounted, computed } from 'vue'
+<script setup>
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
 import AppHeader from './components/AppHeader.vue'
