@@ -10,6 +10,7 @@ import com.example.chatimg2.service.AdminService;
 import com.example.chatimg2.service.AuthPrincipal;
 import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.EmailCodeService;
+import com.example.chatimg2.service.KeyService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +26,7 @@ public class AuthController {
     private final EmailCodeService emailCodeService;
     private final UserAccountRepository userRepository;
     private final AdminService adminService;
+    private final KeyService keyService;
 
     @PostMapping("/email-code")
     public ApiResponse<Void> sendEmailCode(@RequestBody AuthRequest request, HttpServletRequest servletRequest) {
@@ -78,6 +80,7 @@ public class AuthController {
                 if (!expected.equals(user.getPasswordHash())) {
                     return ApiResponse.error(401, "邮箱或密码错误");
                 }
+                user = keyService.syncUserCredits(user);
                 return ApiResponse.success("登录成功", authService.createUserSession(user));
             }
 
@@ -99,7 +102,7 @@ public class AuthController {
         }
         AuthPrincipal p = principal.get();
         if (p.isUser()) {
-            UserAccount user = p.user();
+            UserAccount user = keyService.syncUserCredits(p.user());
             return ApiResponse.success(new AuthResponse(
                     null,
                     user.getId(),

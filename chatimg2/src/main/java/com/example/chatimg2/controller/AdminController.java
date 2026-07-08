@@ -154,6 +154,7 @@ public class AdminController {
     }
 
     private AdminUserDto toUserDto(UserAccount user) {
+        user = keyService.syncUserCredits(user);
         List<String> boundKeys = new ArrayList<>();
         if (user.getEmail() != null && !user.getEmail().isBlank()) {
             try {

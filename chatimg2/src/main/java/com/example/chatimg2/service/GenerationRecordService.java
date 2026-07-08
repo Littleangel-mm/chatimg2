@@ -71,8 +71,11 @@ public class GenerationRecordService {
                     }
                     lockedUser.setUsedCredits(lockedUser.getUsedCredits() + CREDITS_PER_GENERATION);
                     userRepository.save(lockedUser);
+                    Integer chargedKeyId = keyService.syncUserUsageToBoundKeys(lockedUser)
+                            .orElse(null);
 
                     com.example.chatimg2.entity.GenerationRecord pending = new com.example.chatimg2.entity.GenerationRecord();
+                    pending.setKeyId(chargedKeyId);
                     pending.setUserId(lockedUser.getId());
                     pending.setUserEmail(lockedUser.getEmail());
                     pending.setTaskCode(taskCodeService.generate());
@@ -141,6 +144,7 @@ public class GenerationRecordService {
                     userRepository.findById(userId).ifPresent(user -> {
                         user.setUsedCredits(Math.max(0, user.getUsedCredits() - CREDITS_PER_GENERATION));
                         userRepository.save(user);
+                        keyService.syncUserUsageToBoundKeys(user);
                     });
                 });
                 return null;

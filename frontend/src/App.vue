@@ -14,6 +14,7 @@ const showHeader = computed(() => route.path.startsWith('/admin'))
 
 let removeBefore = null
 let removeAfter = null
+let creditTimer = null
 
 function onWindowFocus() {
   if (userStore.isActivated) {
@@ -25,6 +26,11 @@ onMounted(() => {
   userStore.initSession()
   prefetchOnIdle()
   window.addEventListener('focus', onWindowFocus)
+  creditTimer = window.setInterval(() => {
+    if (userStore.isActivated) {
+      userStore.syncCreditsFromServer()
+    }
+  }, 30000)
 
   removeBefore = router.beforeEach((to, from, next) => {
     if (to.path !== from.path) navigating.value = true
@@ -38,6 +44,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('focus', onWindowFocus)
+  if (creditTimer) window.clearInterval(creditTimer)
   removeBefore?.()
   removeAfter?.()
 })
