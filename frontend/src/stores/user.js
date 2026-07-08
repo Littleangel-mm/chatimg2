@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api, { generateApi } from '../api'
+import api from '../api'
 import { useConversationsStore } from './conversations'
 import { useAuthStore } from './auth'
 
@@ -310,7 +310,7 @@ export const useUserStore = defineStore('user', () => {
   async function generate({ prompt, type, sourceImage, model }) {
     generating.value = true
     try {
-      const { data } = await generateApi.post('/user/generate', {
+      const { data } = await api.post('/user/generate', {
         keyCode: keyCode.value,
         prompt,
         type,
@@ -322,11 +322,17 @@ export const useUserStore = defineStore('user', () => {
       upsertHistoryRecord(data.data)
       await syncCreditsFromServer()
 
-      if (resolveRecordStatus(data.data) === 'completed') {
-        return data.data
+      if (resolveRecordStatus(data.data) === 'processing') {
+        pollRecordStatus(data.data.id).catch(err => {
+          try {
+            useConversationsStore().failAssistantForRecord(data.data.id, err.message)
+          } catch {
+            /* ignore */
+          }
+        })
       }
 
-      return await pollRecordStatus(data.data.id)
+      return data.data
     } catch (e) {
       await Promise.all([
         syncCreditsFromServer().catch(() => {}),
