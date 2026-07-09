@@ -13,10 +13,35 @@ const authStore = useAuthStore()
 
 const emit = defineEmits(['close-mobile'])
 
-const items = computed(() => convStore.sortedConversations)
+function previewText(conv) {
+  const messages = conv?.messages || []
+  const latest = [...messages].reverse().find(msg => {
+    return (msg?.content || '').trim() || msg?.sourceImage || msg?.record?.imagePath
+  })
+  if (!latest) {
+    return conv?.type === 'img2img' ? '上传参考图，继续改图细节' : '描述你想生成的画面'
+  }
+  if ((latest.content || '').trim()) {
+    return latest.content.trim()
+  }
+  if (latest.sourceImage) {
+    return '已上传参考图'
+  }
+  if (latest.record?.imagePath) {
+    return '生成完成'
+  }
+  return conv?.type === 'img2img' ? '图生图对话' : '文生图对话'
+}
 
-function newChat(type) {
-  convStore.createConversation(type)
+const items = computed(() =>
+  convStore.sortedConversations.map(conv => ({
+    ...conv,
+    preview: previewText(conv)
+  }))
+)
+
+function newChat() {
+  convStore.createConversation('text2img')
   emit('close-mobile')
 }
 
@@ -53,23 +78,23 @@ async function logout() {
 <template>
   <aside class="sidebar" :class="{ collapsed: !convStore.sidebarOpen }">
     <div class="sidebar-top">
-      <button class="sidebar-toggle" title="&#x6536;&#x8D77;&#x4FA7;&#x8FB9;&#x680F;" @click="convStore.sidebarOpen = !convStore.sidebarOpen">
+      <button class="sidebar-toggle" title="收起侧边栏" @click="convStore.sidebarOpen = !convStore.sidebarOpen">
         &#9776;
       </button>
       <span class="brand">img2.ai</span>
     </div>
 
     <div class="new-actions">
-      <button class="new-btn" @click="newChat('text2img')">&#x65B0;&#x5BF9;&#x8BDD;</button>
-      <button class="new-btn secondary" @click="newChat('img2img')">&#x65B0;&#x56FE;&#x751F;&#x56FE;</button>
-      <button class="new-btn gallery" @click="openInspiration">&#x7075;&#x611F;&#x753B;&#x5ECA;</button>
+      <button class="new-btn" @click="newChat">新对话</button>
+      <button class="new-btn gallery" @click="openInspiration">灵感画廊</button>
     </div>
 
     <div class="conv-list">
-      <p v-if="items.length === 0" class="empty-hint">&#x6682;&#x65E0;&#x5BF9;&#x8BDD;&#xFF0C;&#x70B9;&#x51FB;&#x4E0A;&#x65B9;&#x5F00;&#x59CB;</p>
+      <p v-if="items.length === 0" class="empty-hint">暂无对话，点击上方开始</p>
       <div v-for="conv in items" :key="conv.id" class="conv-item" :class="{ active: conv.id === convStore.activeId }">
         <button type="button" class="conv-body" @click="select(conv.id)">
           <span class="conv-title">{{ conv.title }}</span>
+          <span class="conv-preview">{{ conv.preview }}</span>
         </button>
         <ConversationMenu :conversation="conv" @rename="rename" @delete="remove" />
       </div>
@@ -78,10 +103,10 @@ async function logout() {
     <div class="sidebar-footer">
       <div v-if="userStore.isActivated" class="credits" @click="userStore.syncCreditsFromServer()">
         <span class="dot" />
-        {{ userStore.remainingCredits }} &#x79EF;&#x5206;
+        {{ userStore.remainingCredits }} 积分
       </div>
-      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="key-link" @click="openKeyModal">&#x5207;&#x6362;&#x5BC6;&#x94A5;</button>
-      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="logout-link" @click="logout">&#x9000;&#x51FA;&#x767B;&#x5F55;</button>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="key-link" @click="openKeyModal">切换密钥</button>
+      <button v-if="authStore.isLoggedIn || userStore.isActivated" class="logout-link" @click="logout">退出登录</button>
     </div>
   </aside>
 </template>
@@ -164,11 +189,6 @@ async function logout() {
   transform: translateY(-1px);
 }
 
-.new-btn.secondary {
-  background: transparent;
-  box-shadow: none;
-}
-
 .new-btn.gallery {
   background: var(--gradient);
   border-color: transparent;
@@ -197,21 +217,25 @@ async function logout() {
 
 .conv-item {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 6px;
   width: 100%;
-  padding: 2px 4px 2px 2px;
-  margin-bottom: 2px;
-  border-radius: 10px;
-  transition: background 0.12s;
+  padding: 4px;
+  margin-bottom: 4px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 .conv-item:hover {
-  background: var(--hover);
+  background: rgba(255, 255, 255, 0.48);
+  border-color: rgba(224, 155, 176, 0.2);
 }
 
 .conv-item.active {
-  background: var(--accent-soft);
+  background: rgba(255, 244, 242, 0.96);
+  border-color: rgba(224, 155, 176, 0.28);
+  box-shadow: 0 8px 20px rgba(224, 155, 176, 0.1);
 }
 
 .conv-item:hover :deep(.menu-trigger),
@@ -219,14 +243,20 @@ async function logout() {
   opacity: 1;
 }
 
+.conv-item :deep(.conv-menu) {
+  display: flex;
+  align-items: center;
+}
+
 .conv-body {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 4px 8px 10px;
-  border-radius: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 8px 10px 10px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text-muted);
   font-size: 14px;
@@ -239,10 +269,24 @@ async function logout() {
 }
 
 .conv-title {
-  flex: 1;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.conv-preview {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  opacity: 0.9;
 }
 
 .sidebar-footer {

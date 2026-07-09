@@ -50,9 +50,10 @@ function recordCreatedTime(record) {
   return Number.isFinite(time) ? time : 0
 }
 
-function recordMatchesConversation(record, conv) {
+function recordMatchesConversation(record, conv, userMsg = null) {
   const type = record?.generationType === 'img2img' ? 'img2img' : 'text2img'
-  return type === (conv?.type || 'text2img')
+  const expectedType = userMsg?.sourceImage ? 'img2img' : (conv?.type || 'text2img')
+  return type === expectedType
 }
 
 function uid() {
@@ -236,6 +237,17 @@ export const useConversationsStore = defineStore('conversations', () => {
     persist()
   }
 
+  function setConversationType(id, type) {
+    const conv = conversations.value.find(c => c.id === id)
+    if (!conv) return null
+    const nextType = type === 'img2img' ? 'img2img' : 'text2img'
+    if (conv.type === nextType) return conv
+    conv.type = nextType
+    conv.updatedAt = Date.now()
+    persist()
+    return conv
+  }
+
   function deleteConversation(id) {
     conversations.value = conversations.value.filter(c => c.id !== id)
     if (activeId.value === id) {
@@ -410,7 +422,7 @@ export const useConversationsStore = defineStore('conversations', () => {
             record?.id != null &&
             Number(record.id) !== Number(msg.recordId || msg.record?.id) &&
             record?.prompt === userMsg.content &&
-            recordMatchesConversation(record, conv) &&
+            recordMatchesConversation(record, conv, userMsg) &&
             resolveRecordStatus(record) === 'completed' &&
             !!record.imagePath
           )
@@ -513,6 +525,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     createConversation,
     selectConversation,
     renameConversation,
+    setConversationType,
     deleteConversation,
     ensureActive,
     addExchange,

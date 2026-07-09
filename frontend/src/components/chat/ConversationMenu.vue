@@ -125,25 +125,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  opacity: 0.4;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, transform 0.15s;
 }
 
 .menu-trigger:hover,
 .menu-trigger.active {
   background: var(--hover-strong);
   color: var(--text);
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 .rename-box {
   display: flex;
   gap: 4px;
   align-items: center;
+  padding-right: 2px;
 }
 
 .rename-input {
   width: 120px;
-  padding: 4px 8px;
+  padding: 6px 8px;
   font-size: 12px;
   background: var(--bg-input);
   border: 1px solid var(--border);

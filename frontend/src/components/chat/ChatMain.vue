@@ -143,8 +143,10 @@ async function onPaste(e) {
   if (!file) return
 
   e.preventDefault()
-  if (!conversation() || conversation()?.type !== 'img2img') {
+  if (!conversation()) {
     convStore.createConversation('img2img')
+  } else if (conversation()?.type !== 'img2img') {
+    convStore.setConversationType(conversation().id, 'img2img')
   }
   await applySourceFile(file, imageItem?.type || file.type || 'image/png')
   nextTick(() => {
@@ -162,15 +164,12 @@ function clearSource() {
 }
 
 function switchChatType(type) {
-  if (currentType.value === type) return
-  const draft = prompt.value
-  const reusable = convStore.sortedConversations.find(conv => {
-    return conv.type === type && (!conv.messages || conv.messages.length === 0)
-  })
-  if (reusable) {
-    convStore.selectConversation(reusable.id)
+  let conv = conversation()
+  if (!conv) {
+    conv = convStore.createConversation(type)
   } else {
-    convStore.createConversation(type)
+    if (conv.type === type) return
+    conv = convStore.setConversationType(conv.id, type) || conv
   }
   error.value = ''
   if (type === 'text2img') {
@@ -260,8 +259,10 @@ function applyPendingPrompt() {
   const text = convStore.consumePendingPrompt()
   if (!text) return
   let conv = conversation()
-  if (!conv || conv.type !== 'text2img') {
+  if (!conv) {
     conv = convStore.createConversation('text2img')
+  } else if (conv.type !== 'text2img') {
+    conv = convStore.setConversationType(conv.id, 'text2img') || conv
   }
   error.value = ''
   prompt.value = text
@@ -352,10 +353,9 @@ onActivated(applyPendingPrompt)
     <div v-if="!conversation()" class="welcome">
       <div class="welcome-inner">
         <h2>&#x4ECA;&#x5929;&#x60F3;&#x521B;&#x4F5C;&#x4EC0;&#x4E48;&#xFF1F;</h2>
-        <p>&#x4ECE;&#x5DE6;&#x4FA7;&#x65B0;&#x5EFA;&#x5BF9;&#x8BDD;&#xFF0C;&#x6216;&#x5F00;&#x59CB;&#x6587;&#x751F;&#x56FE; / &#x56FE;&#x751F;&#x56FE;</p>
+        <p>&#x5148;&#x65B0;&#x5EFA;&#x5BF9;&#x8BDD;&#xFF0C;&#x518D;&#x5728;&#x8F93;&#x5165;&#x6846;&#x4E0A;&#x65B9;&#x5207;&#x6362;&#x6587;&#x751F;&#x56FE;&#x6216;&#x56FE;&#x751F;&#x56FE;</p>
         <div class="welcome-actions">
           <button class="welcome-btn" @click="convStore.createConversation('text2img')">&#x65B0;&#x5BF9;&#x8BDD;</button>
-          <button class="welcome-btn" @click="convStore.createConversation('img2img')">&#x65B0;&#x56FE;&#x751F;&#x56FE;</button>
         </div>
       </div>
     </div>
