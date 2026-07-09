@@ -92,10 +92,6 @@ public class ImageApiClient {
                 body.put("prompt", prompt);
                 body.put("n", 1);
                 body.put("size", "1024x1024");
-                // 不使用 b64_json：会迫使 API 同步等待生图完成，容易触发超时
-                if (model.startsWith("gpt-image")) {
-                    body.put("quality", "medium");
-                }
                 String jsonBody = objectMapper.writeValueAsString(body);
                 Request request = new Request.Builder()
                         .url(getApiBaseUrl() + "/v1/images/generations")
@@ -189,11 +185,16 @@ public class ImageApiClient {
 
     private List<String> buildText2imgModels(String requestedModel, List<String> fallbacks) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        if (requestedModel != null && !requestedModel.isBlank()) {
+        if (isGptImageModel(requestedModel)) {
             models.add(requestedModel.trim());
         }
-        models.add(defaultText2imgModel);
-        models.addAll(fallbacks);
+        if (isGptImageModel(defaultText2imgModel)) {
+            models.add(defaultText2imgModel.trim());
+        }
+        fallbacks.stream()
+                .filter(this::isGptImageModel)
+                .map(String::trim)
+                .forEach(models::add);
         return new ArrayList<>(models);
     }
 

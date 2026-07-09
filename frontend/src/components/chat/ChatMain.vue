@@ -50,6 +50,15 @@ const accountInfo = computed(() => ({
 }))
 
 const currentType = computed(() => conversation()?.type || 'text2img')
+const activeMessages = computed(() => {
+  const messages = conversation()?.messages || []
+  return [...messages].sort((a, b) => {
+    const timeDiff = (a.createdAt || 0) - (b.createdAt || 0)
+    if (timeDiff !== 0) return timeDiff
+    if (a.role === b.role) return 0
+    return a.role === 'user' ? -1 : 1
+  })
+})
 
 watch(
   () => convStore.activeConversation?.messages?.length,
@@ -365,7 +374,7 @@ onActivated(applyPendingPrompt)
         <p>{{ conversation().type === 'img2img' ? '\u4e0a\u4f20\u53c2\u8003\u56fe\u5e76\u63cf\u8ff0\u60f3\u8981\u7684\u6548\u679c' : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762' }}</p>
       </div>
       <ChatMessage
-        v-for="msg in conversation().messages"
+        v-for="msg in activeMessages"
         :key="msg.id"
         :message="msg"
       />

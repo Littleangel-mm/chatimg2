@@ -233,7 +233,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     const next = (title || '').trim()
     if (!next) return
     conv.title = next
-    conv.updatedAt = Date.now()
     persist()
   }
 
@@ -243,7 +242,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     const nextType = type === 'img2img' ? 'img2img' : 'text2img'
     if (conv.type === nextType) return conv
     conv.type = nextType
-    conv.updatedAt = Date.now()
     persist()
     return conv
   }
@@ -266,13 +264,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   function addExchange(conversationId, { prompt, sourceImage, type, model }) {
     const conv = conversations.value.find(c => c.id === conversationId)
     if (!conv) return null
+    const now = Date.now()
 
     const userMsg = {
       id: uid(),
       role: 'user',
       content: prompt,
       sourceImage: sourceImage || null,
-      createdAt: Date.now()
+      createdAt: now
     }
     const assistantMsg = {
       id: uid(),
@@ -281,7 +280,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       record: null,
       status: 'processing',
       errorMessage: null,
-      createdAt: Date.now()
+      createdAt: now + 1
     }
 
     conv.messages.push(userMsg, assistantMsg)
@@ -307,7 +306,6 @@ export const useConversationsStore = defineStore('conversations', () => {
           msg.status = resolveRecordStatus(record)
           msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
           attachSourceImagePath(conv, msg, record)
-          conv.updatedAt = Date.now()
           changed = true
           matched = true
         }
@@ -323,7 +321,6 @@ export const useConversationsStore = defineStore('conversations', () => {
           pending.status = resolveRecordStatus(record)
           pending.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
           attachSourceImagePath(conv, pending, record)
-          conv.updatedAt = Date.now()
           changed = true
         }
       }
@@ -357,7 +354,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     msg.record = { ...record }
     msg.status = resolveRecordStatus(record)
     msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
-    conv.updatedAt = Date.now()
     persist()
     return true
   }
@@ -371,7 +367,6 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (!recordIdEquals(msg.recordId, recordId) && !recordIdEquals(msg.record?.id, recordId)) continue
         msg.status = 'failed'
         msg.errorMessage = errorMessage || '生成失败'
-        conv.updatedAt = Date.now()
         changed = true
       }
     }
@@ -401,7 +396,6 @@ export const useConversationsStore = defineStore('conversations', () => {
           msg.record = { ...latest }
           msg.status = nextStatus
           msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
-          conv.updatedAt = Date.now()
           changed = true
         }
       }
@@ -438,7 +432,6 @@ export const useConversationsStore = defineStore('conversations', () => {
         msg.record = { ...latest }
         msg.status = resolveRecordStatus(latest)
         msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
-        conv.updatedAt = Date.now()
         usedIds.add(Number(latest.id))
         changed = true
       }
@@ -457,7 +450,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!pending) return
     pending.status = 'failed'
     pending.errorMessage = errorMessage || '生成失败'
-    conv.updatedAt = Date.now()
     persist()
   }
 

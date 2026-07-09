@@ -39,7 +39,7 @@ public class ChatHistoryService {
         List<Integer> ids = conversations.stream().map(ChatConversation::getId).toList();
         Map<Integer, List<ChatMessage>> messagesByConversation = new HashMap<>();
         if (!ids.isEmpty()) {
-            for (ChatMessage message : messageRepository.findByConversationIdInOrderByCreatedAtAsc(ids)) {
+            for (ChatMessage message : messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(ids)) {
                 messagesByConversation.computeIfAbsent(message.getConversationId(), ignored -> new ArrayList<>()).add(message);
             }
         }
@@ -109,7 +109,9 @@ public class ChatHistoryService {
         dto.setCreatedAt(toMillis(conversation.getCreatedAt()));
         dto.setUpdatedAt(toMillis(conversation.getUpdatedAt()));
         dto.setMessages(messages.stream()
-                .sorted(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .sorted(Comparator
+                        .comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ChatMessage::getId, Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(this::toDto)
                 .toList());
         return dto;

@@ -21,9 +21,7 @@ public class AsyncGenerationExecutor {
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
 
-    private static final List<String> TEXT2IMG_FALLBACKS = List.of(
-            "gpt-image-2", "gpt-image-1", "dall-e-2", "dall-e-3"
-    );
+    private static final String TEXT2IMG_MODEL = "gpt-image-2";
     private static final String IMG2IMG_MODEL = "gpt-image-2";
     private static final String IMG2IMG_USER_ERROR = "生成失败，请更换图片重试";
     private static final String TEXT2IMG_USER_ERROR = "生成失败，请稍后重试";
@@ -52,7 +50,7 @@ public class AsyncGenerationExecutor {
                         IMG2IMG_MODEL,
                         List.of());
             } else {
-                imageUrl = imageApiClient.textToImage(prompt, model, TEXT2IMG_FALLBACKS);
+                imageUrl = imageApiClient.textToImage(prompt, TEXT2IMG_MODEL, List.of());
             }
 
             ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);

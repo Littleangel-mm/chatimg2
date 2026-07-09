@@ -7,6 +7,6 @@ import java.util.Collection;
 import java.util.List;
 
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Integer> {
-    List<ChatMessage> findByConversationIdInOrderByCreatedAtAsc(Collection<Integer> conversationIds);
+    List<ChatMessage> findByConversationIdInOrderByCreatedAtAscIdAsc(Collection<Integer> conversationIds);
     void deleteByConversationId(Integer conversationId);
 }
