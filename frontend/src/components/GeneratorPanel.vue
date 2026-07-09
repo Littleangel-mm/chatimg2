@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useUserStore } from '../stores/user'
 import { compressImage } from '../utils/image'
 
@@ -20,6 +20,16 @@ const models = [
   { id: 'dall-e-2', name: 'DALL-E 2' },
   { id: 'dall-e-3', name: 'DALL-E 3' }
 ]
+
+const availableModels = computed(() => {
+  return models.filter(item => item.id === 'gpt-image-2')
+})
+
+watch(mode, () => {
+  if (!availableModels.value.some(item => item.id === model.value)) {
+    model.value = availableModels.value[0]?.id || 'gpt-image-2'
+  }
+})
 
 async function onFileChange(e) {
   const file = e.target.files?.[0]
@@ -118,7 +128,7 @@ async function generate() {
         <div class="control-row">
           <label>AI Model</label>
           <select v-model="model" class="select">
-            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
+            <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.name }}</option>
           </select>
         </div>
         <div class="control-row">

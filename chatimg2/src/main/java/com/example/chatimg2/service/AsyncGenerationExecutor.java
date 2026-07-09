@@ -3,7 +3,6 @@ package com.example.chatimg2.service;
 import com.example.chatimg2.config.ImageStorageConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -22,15 +21,12 @@ public class AsyncGenerationExecutor {
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
 
-    @Value("${app.api.model.img2img:gpt-image-1}")
-    private String defaultImg2imgModel;
-
     private static final List<String> TEXT2IMG_FALLBACKS = List.of(
             "gpt-image-2", "gpt-image-1", "dall-e-2", "dall-e-3"
     );
-    private static final List<String> IMG2IMG_FALLBACKS = List.of(
-            "gpt-image-1", "gpt-image-2", "dall-e-2"
-    );
+    private static final String IMG2IMG_MODEL = "gpt-image-2";
+    private static final String IMG2IMG_USER_ERROR = "生成失败，请更换图片重试";
+    private static final String TEXT2IMG_USER_ERROR = "生成失败，请稍后重试";
 
     @Async("generationExecutor")
     public void runGeneration(Integer recordId, String taskCode, Integer keyId, String prompt,
@@ -53,8 +49,8 @@ public class AsyncGenerationExecutor {
                         imageBytes,
                         mediaType,
                         sourcePath.getFileName().toString(),
-                        defaultImg2imgModel,
-                        buildImg2imgFallbacks(model));
+                        IMG2IMG_MODEL,
+                        List.of());
             } else {
                 imageUrl = imageApiClient.textToImage(prompt, model, TEXT2IMG_FALLBACKS);
             }
@@ -64,10 +60,11 @@ public class AsyncGenerationExecutor {
             log.info("Async generation completed: recordId={}, taskCode={}", recordId, taskCode);
         } catch (Exception e) {
             log.error("Async generation failed: recordId={}, taskCode={}", recordId, taskCode, e);
+            String userMessage = "img2img".equals(generationType) ? IMG2IMG_USER_ERROR : TEXT2IMG_USER_ERROR;
             if (userId != null) {
-                recordService.markFailedForUser(recordId, userId, e.getMessage());
+                recordService.markFailedForUser(recordId, userId, userMessage);
             } else {
-                recordService.markFailed(recordId, keyId, e.getMessage());
+                recordService.markFailed(recordId, keyId, userMessage);
             }
         }
     }
@@ -78,14 +75,6 @@ public class AsyncGenerationExecutor {
             return path;
         }
         return storageConfig.getBackupDir().resolve(sourceImagePath).normalize();
-    }
-
-    private List<String> buildImg2imgFallbacks(String requestedModel) {
-        java.util.LinkedHashSet<String> models = new java.util.LinkedHashSet<>(IMG2IMG_FALLBACKS);
-        if (requestedModel != null && !requestedModel.isBlank()) {
-            models.add(requestedModel.trim());
-        }
-        return List.copyOf(models);
     }
 
     private String detectImageMediaType(Path path, byte[] bytes) {

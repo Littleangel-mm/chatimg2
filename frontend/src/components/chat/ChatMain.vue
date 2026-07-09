@@ -26,6 +26,10 @@ const models = [
   { id: 'dall-e-3', name: 'DALL-E 3' }
 ]
 
+const availableModels = computed(() => {
+  return models.filter(item => item.id === 'gpt-image-2')
+})
+
 const conversation = () => convStore.activeConversation
 
 const avatarText = computed(() => {
@@ -44,6 +48,8 @@ const accountInfo = computed(() => ({
   credits: authStore.user?.remainingCredits ?? userStore.remainingCredits,
   keyCode: authStore.isAdmin ? '管理员不绑定密钥' : userStore.keyCode || '未激活'
 }))
+
+const currentType = computed(() => conversation()?.type || 'text2img')
 
 watch(
   () => convStore.activeConversation?.messages?.length,
@@ -67,6 +73,15 @@ watch(
 
 watch(prompt, () => nextTick(resizePrompt))
 
+watch(
+  () => conversation()?.type,
+  () => {
+    if (!availableModels.value.some(item => item.id === model.value)) {
+      model.value = availableModels.value[0]?.id || 'gpt-image-2'
+    }
+  }
+)
+
 function resizePrompt() {
   const el = promptEl.value
   if (!el) return
@@ -85,27 +100,89 @@ function scrollToBottom() {
 async function onFileChange(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  if (!file.type.startsWith('image/')) {
+  await applySourceFile(file, file.type)
+  e.target.value = ''
+}
+
+function normalizeClipboardImage(file, fallbackType = 'image/png') {
+  if (!file) return null
+  if (file.type?.startsWith('image/')) return file
+  return new File([file], file.name || `pasted.${fallbackType.split('/')[1] || 'png'}`, {
+    type: fallbackType
+  })
+}
+
+async function applySourceFile(file, fallbackType = '') {
+  const normalized = normalizeClipboardImage(file, fallbackType || 'image/png')
+  if (!normalized || !normalized.type.startsWith('image/')) {
     error.value = '\u8bf7\u4e0a\u4f20\u56fe\u7247\u6587\u4ef6'
     return
   }
   uploading.value = true
   error.value = ''
   try {
-    const compressed = await compressImage(file)
+    const compressed = await compressImage(normalized)
     sourcePreview.value = compressed
     sourceBase64.value = compressed
-  } catch {
-    error.value = '\u56fe\u7247\u5904\u7406\u5931\u8d25'
+  } catch (err) {
+    error.value = err?.message || '\u56fe\u7247\u5904\u7406\u5931\u8d25'
   } finally {
     uploading.value = false
-    e.target.value = ''
   }
+}
+
+async function onPaste(e) {
+  const draft = prompt.value
+  const items = Array.from(e.clipboardData?.items || [])
+  const imageItem = items.find(item => item.type?.startsWith('image/'))
+  const fileFromItem = imageItem?.getAsFile?.()
+  const fileFromList = Array.from(e.clipboardData?.files || []).find(file => {
+    return file.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || '')
+  })
+  const file = fileFromItem || fileFromList
+  if (!file) return
+
+  e.preventDefault()
+  if (!conversation() || conversation()?.type !== 'img2img') {
+    convStore.createConversation('img2img')
+  }
+  await applySourceFile(file, imageItem?.type || file.type || 'image/png')
+  nextTick(() => {
+    if (draft && !prompt.value) {
+      prompt.value = draft
+    }
+    resizePrompt()
+    promptEl.value?.focus()
+  })
 }
 
 function clearSource() {
   sourcePreview.value = ''
   sourceBase64.value = ''
+}
+
+function switchChatType(type) {
+  if (currentType.value === type) return
+  const draft = prompt.value
+  const reusable = convStore.sortedConversations.find(conv => {
+    return conv.type === type && (!conv.messages || conv.messages.length === 0)
+  })
+  if (reusable) {
+    convStore.selectConversation(reusable.id)
+  } else {
+    convStore.createConversation(type)
+  }
+  error.value = ''
+  if (type === 'text2img') {
+    clearSource()
+  }
+  nextTick(() => {
+    if (draft && !prompt.value) {
+      prompt.value = draft
+    }
+    resizePrompt()
+    promptEl.value?.focus()
+  })
 }
 
 function openKeyModal() {
@@ -134,7 +211,7 @@ async function send() {
     return
   }
 
-  const conv = convStore.ensureActive(conversation()?.type || 'text2img')
+  const conv = convStore.ensureActive(currentType.value || 'text2img')
   const isImg2img = conv.type === 'img2img'
 
   if (isImg2img && !sourceBase64.value) {
@@ -146,7 +223,7 @@ async function send() {
   const exchange = convStore.addExchange(conv.id, {
     prompt: text,
     sourceImage: isImg2img ? sourceBase64.value : null,
-    type: conv.type,
+    type: isImg2img ? 'img2img' : 'text2img',
     model: model.value
   })
 
@@ -156,7 +233,7 @@ async function send() {
   try {
     const record = await userStore.generate({
       prompt: text,
-      type: conv.type,
+      type: isImg2img ? 'img2img' : 'text2img',
       model: model.value,
       sourceImage: isImg2img ? sourceBase64.value : undefined
     })
@@ -296,6 +373,22 @@ onActivated(applyPendingPrompt)
 
     <div v-if="conversation()" class="input-area">
       <div class="input-card">
+        <div class="mode-switch" role="tablist" aria-label="生成模式">
+          <button
+            type="button"
+            :class="{ active: currentType === 'text2img' }"
+            @click="switchChatType('text2img')"
+          >
+            文生图
+          </button>
+          <button
+            type="button"
+            :class="{ active: currentType === 'img2img' }"
+            @click="switchChatType('img2img')"
+          >
+            图生图
+          </button>
+        </div>
         <div v-if="conversation().type === 'img2img'" class="upload-row">
           <div v-if="uploading" class="upload-chip loading">&#x538B;&#x7F29;&#x4E2D;...</div>
           <div v-else-if="sourcePreview" class="upload-chip">
@@ -318,10 +411,11 @@ onActivated(applyPendingPrompt)
               : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762...'"
             rows="1"
             @keydown="onKeydown"
+            @paste="onPaste"
             @input="resizePrompt"
           />
           <select v-model="model" class="model-select" title="&#x6A21;&#x578B;">
-            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
+            <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.name }}</option>
           </select>
           <button
             class="send-btn"
@@ -637,6 +731,33 @@ onActivated(applyPendingPrompt)
   border-radius: var(--radius-lg);
   padding: 12px;
   box-shadow: var(--shadow);
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+}
+
+.mode-switch button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.mode-switch button.active {
+  background: var(--bg-elevated);
+  color: var(--accent-hover);
+  box-shadow: var(--shadow-sm);
 }
 
 .upload-row {

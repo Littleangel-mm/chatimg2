@@ -199,11 +199,18 @@ public class ImageApiClient {
 
     private List<String> buildImageEditModels(String requestedModel, List<String> fallbacks) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
-        if (requestedModel != null && !requestedModel.isBlank()) {
+        if (isGptImageModel(requestedModel)) {
             models.add(requestedModel.trim());
         }
-        models.addAll(fallbacks);
+        fallbacks.stream()
+                .filter(this::isGptImageModel)
+                .map(String::trim)
+                .forEach(models::add);
         return new ArrayList<>(models);
+    }
+
+    private boolean isGptImageModel(String model) {
+        return model != null && model.trim().startsWith("gpt-image");
     }
 
     private String resolveImageFromSubmit(Request request) throws IOException {

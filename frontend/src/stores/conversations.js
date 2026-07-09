@@ -36,6 +36,15 @@ function resolveRecordStatus(record) {
   return status || 'processing'
 }
 
+function friendlyGenerationError(message, record = null) {
+  const text = message || ''
+  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
+  if (record?.generationType === 'img2img' || rawApiError) {
+    return '生成失败，请更换图片重试'
+  }
+  return text || '生成失败'
+}
+
 function recordCreatedTime(record) {
   const time = new Date(record?.createdAt || 0).getTime()
   return Number.isFinite(time) ? time : 0
@@ -64,6 +73,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   const pendingPrompt = ref('')
   let remoteSyncTimer = null
   let remoteLoading = false
+  let pendingRemoteSync = false
 
   const activeConversation = computed(() =>
     conversations.value.find(c => c.id === activeId.value) ?? null
@@ -74,11 +84,12 @@ export const useConversationsStore = defineStore('conversations', () => {
   )
 
   function persist() {
-    if (!boundKeyCode.value) return
-    writeStored(boundKeyCode.value, {
-      conversations: conversations.value,
-      activeId: activeId.value
-    })
+    if (boundKeyCode.value) {
+      writeStored(boundKeyCode.value, {
+        conversations: conversations.value,
+        activeId: activeId.value
+      })
+    }
     scheduleRemoteSync()
   }
 
@@ -141,7 +152,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         recordId: msg.recordId || null,
         record: msg.recordId ? { id: msg.recordId, status: msg.status } : null,
         status: msg.status || null,
-        errorMessage: msg.errorMessage || null,
+        errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
         createdAt: msg.createdAt || Date.now()
       }))
     }))
@@ -154,7 +165,11 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function scheduleRemoteSync() {
-    if (remoteLoading || !hasAuthToken()) return
+    if (!hasAuthToken()) return
+    if (remoteLoading) {
+      pendingRemoteSync = true
+      return
+    }
     clearTimeout(remoteSyncTimer)
     remoteSyncTimer = setTimeout(() => {
       syncRemote().catch(() => {})
@@ -162,7 +177,12 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   async function syncRemote() {
-    if (!hasAuthToken() || remoteLoading) return false
+    if (!hasAuthToken()) return false
+    if (remoteLoading) {
+      pendingRemoteSync = true
+      return false
+    }
+    pendingRemoteSync = false
     const { data } = await api.post('/chat/sync', toRemotePayload())
     return data.code === 200
   }
@@ -180,6 +200,9 @@ export const useConversationsStore = defineStore('conversations', () => {
       return applied
     } finally {
       remoteLoading = false
+      if (pendingRemoteSync) {
+        scheduleRemoteSync()
+      }
     }
   }
 
@@ -270,7 +293,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           msg.recordId = record.id
           msg.record = { ...record }
           msg.status = resolveRecordStatus(record)
-          msg.errorMessage = record.errorMessage || null
+          msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
           attachSourceImagePath(conv, msg, record)
           conv.updatedAt = Date.now()
           changed = true
@@ -286,7 +309,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           pending.recordId = record.id
           pending.record = { ...record }
           pending.status = resolveRecordStatus(record)
-          pending.errorMessage = record.errorMessage || null
+          pending.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
           attachSourceImagePath(conv, pending, record)
           conv.updatedAt = Date.now()
           changed = true
@@ -321,13 +344,14 @@ export const useConversationsStore = defineStore('conversations', () => {
     msg.recordId = record.id
     msg.record = { ...record }
     msg.status = resolveRecordStatus(record)
-    msg.errorMessage = record.errorMessage || null
+    msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
     conv.updatedAt = Date.now()
     persist()
     return true
   }
 
   function failAssistantForRecord(recordId, errorMessage) {
+    errorMessage = friendlyGenerationError(errorMessage)
     let changed = false
     for (const conv of conversations.value) {
       for (const msg of conv.messages) {
@@ -364,7 +388,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           msg.recordId = latest.id
           msg.record = { ...latest }
           msg.status = nextStatus
-          msg.errorMessage = latest.errorMessage || null
+          msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
           conv.updatedAt = Date.now()
           changed = true
         }
@@ -401,7 +425,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         msg.recordId = latest.id
         msg.record = { ...latest }
         msg.status = resolveRecordStatus(latest)
-        msg.errorMessage = latest.errorMessage || null
+        msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
         conv.updatedAt = Date.now()
         usedIds.add(Number(latest.id))
         changed = true
@@ -412,6 +436,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function failLatestAssistant(errorMessage) {
+    errorMessage = friendlyGenerationError(errorMessage)
     const conv = activeConversation.value
     if (!conv) return
     const pending = [...conv.messages].reverse().find(
@@ -443,7 +468,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         recordId: record.id,
         record: { ...record },
         status: resolveRecordStatus(record),
-        errorMessage: record.errorMessage || null,
+        errorMessage: record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null,
         createdAt: new Date(record.createdAt || Date.now()).getTime() + 1
       }
       return {

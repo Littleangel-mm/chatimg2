@@ -20,6 +20,15 @@ function resolveRecordStatus(record) {
   return status || 'processing'
 }
 
+function friendlyGenerationError(message, record = null) {
+  const text = message || ''
+  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
+  if (record?.generationType === 'img2img' || rawApiError) {
+    return '生成失败，请更换图片重试'
+  }
+  return text || '生成失败'
+}
+
 function readCache() {
   try {
     return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')

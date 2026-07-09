@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
+import { IMAGE_BASE_PATH } from '../../api'
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -9,6 +10,7 @@ const props = defineProps({
 const convStore = useConversationsStore()
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
+const sourceImageUrl = computed(() => normalizeSourceImageUrl(props.message.sourceImage))
 const isProcessing = computed(() => {
   const status = (props.message.record?.status || props.message.status || '').toLowerCase()
   if (status === 'completed' || status === 'failed') return false
@@ -19,6 +21,20 @@ const isFailed = computed(() => {
   const status = (props.message.record?.status || props.message.status || '').toLowerCase()
   return status === 'failed'
 })
+
+function normalizeSourceImageUrl(path) {
+  if (!path) return ''
+  if (path.startsWith('data:')) return path
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  if (path.startsWith('/')) return path
+
+  const normalized = path.replaceAll('\\', '/')
+  const sourcesIndex = normalized.indexOf('/sources/')
+  if (sourcesIndex >= 0) {
+    return `${IMAGE_BASE_PATH}${normalized.slice(sourcesIndex + 1)}`
+  }
+  return `${IMAGE_BASE_PATH}${normalized}`
+}
 </script>
 
 <template>
@@ -29,8 +45,8 @@ const isFailed = computed(() => {
     <div class="bubble">
       <template v-if="message.role === 'user'">
         <img
-          v-if="message.sourceImage"
-          :src="message.sourceImage"
+          v-if="sourceImageUrl"
+          :src="sourceImageUrl"
           alt="参考图"
           class="source-thumb"
         />
