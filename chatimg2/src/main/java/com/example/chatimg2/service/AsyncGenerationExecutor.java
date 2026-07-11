@@ -3,12 +3,14 @@ package com.example.chatimg2.service;
 import com.example.chatimg2.config.ImageStorageConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.List;
 
 @Slf4j
@@ -20,6 +22,10 @@ public class AsyncGenerationExecutor {
     private final ImageBackupService imageBackupService;
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
+    private final DistributedLockService distributedLockService;
+
+    @Value("${app.generation.lock.ttl-ms:1800000}")
+    private long generationLockTtlMs;
 
     private static final String TEXT2IMG_MODEL = "gpt-image-2";
     private static final String IMG2IMG_MODEL = "gpt-image-2";
@@ -35,35 +41,59 @@ public class AsyncGenerationExecutor {
     @Async("generationExecutor")
     public void runGeneration(Integer recordId, String taskCode, Integer keyId, Integer userId, String prompt,
                               String generationType, String sourceImagePath, String model, String ownerFolder) {
-        log.info("Async generation started: recordId={}, taskCode={}", recordId, taskCode);
+        String lockKey = "generation:record:" + recordId;
         try {
-            String imageUrl;
-            if ("img2img".equals(generationType)) {
-                Path sourcePath = resolveSourcePath(sourceImagePath);
-                byte[] imageBytes = Files.readAllBytes(sourcePath);
-                String mediaType = detectImageMediaType(sourcePath, imageBytes);
-                imageUrl = imageApiClient.imageEdit(
-                        prompt,
-                        imageBytes,
-                        mediaType,
-                        sourcePath.getFileName().toString(),
-                        IMG2IMG_MODEL,
-                        List.of());
-            } else {
-                imageUrl = imageApiClient.textToImage(prompt, TEXT2IMG_MODEL, List.of());
+            if (!distributedLockService.acquire(lockKey, Duration.ofMillis(generationLockTtlMs))) {
+                log.warn("Async generation skipped because lock is held: recordId={}, taskCode={}", recordId, taskCode);
+                return;
             }
-
-            ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
-            recordService.markCompleted(recordId, backup.imagePath());
-            log.info("Async generation completed: recordId={}, taskCode={}", recordId, taskCode);
+        } catch (Exception e) {
+            log.error("Async generation failed before start: recordId={}, taskCode={}", recordId, taskCode, e);
+            markGenerationFailed(recordId, keyId, userId, generationType);
+            return;
+        }
+        long startedAt = System.currentTimeMillis();
+        log.info("Async generation started: recordId={}, taskCode={}, type={}", recordId, taskCode, generationType);
+        try {
+            runLockedGeneration(recordId, taskCode, prompt, generationType, sourceImagePath, ownerFolder, startedAt);
         } catch (Exception e) {
             log.error("Async generation failed: recordId={}, taskCode={}", recordId, taskCode, e);
-            String userMessage = "img2img".equals(generationType) ? IMG2IMG_USER_ERROR : TEXT2IMG_USER_ERROR;
-            if (userId != null) {
-                recordService.markFailedForUser(recordId, userId, userMessage);
-            } else {
-                recordService.markFailed(recordId, keyId, userMessage);
-            }
+            markGenerationFailed(recordId, keyId, userId, generationType);
+        } finally {
+            distributedLockService.release(lockKey);
+        }
+    }
+
+    private void runLockedGeneration(Integer recordId, String taskCode, String prompt, String generationType,
+                                     String sourceImagePath, String ownerFolder, long startedAt) throws Exception {
+        String imageUrl;
+        if ("img2img".equals(generationType)) {
+            Path sourcePath = resolveSourcePath(sourceImagePath);
+            byte[] imageBytes = Files.readAllBytes(sourcePath);
+            String mediaType = detectImageMediaType(sourcePath, imageBytes);
+            imageUrl = imageApiClient.imageEdit(
+                    prompt,
+                    imageBytes,
+                    mediaType,
+                    sourcePath.getFileName().toString(),
+                    IMG2IMG_MODEL,
+                    List.of());
+        } else {
+            imageUrl = imageApiClient.textToImage(prompt, TEXT2IMG_MODEL, List.of());
+        }
+
+        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
+        recordService.markCompleted(recordId, backup.imagePath());
+        log.info("Async generation completed: recordId={}, taskCode={}, elapsedMs={}",
+                recordId, taskCode, System.currentTimeMillis() - startedAt);
+    }
+
+    private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType) {
+        String userMessage = "img2img".equals(generationType) ? IMG2IMG_USER_ERROR : TEXT2IMG_USER_ERROR;
+        if (userId != null) {
+            recordService.markFailedForUser(recordId, userId, userMessage);
+        } else {
+            recordService.markFailed(recordId, keyId, userMessage);
         }
     }
 

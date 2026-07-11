@@ -38,7 +38,17 @@ public final class DatabaseMigration {
             stmt.execute("UPDATE generation_records SET image_url = regexp_replace(image_url, '^.*/', '') WHERE image_url IS NOT NULL AND image_url LIKE '%/%'");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_id ON generation_records(user_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_email ON generation_records(user_email)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_recovery ON generation_records(status, created_at)");
             stmt.execute("ALTER TABLE generation_records ALTER COLUMN key_id DROP NOT NULL");
+
+            stmt.execute("CREATE TABLE IF NOT EXISTS distributed_locks (" +
+                    "lock_key VARCHAR(160) PRIMARY KEY, " +
+                    "owner_id VARCHAR(160) NOT NULL, " +
+                    "expires_at TIMESTAMP NOT NULL, " +
+                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_distributed_locks_expires_at ON distributed_locks(expires_at)");
 
             stmt.execute("ALTER TABLE activation_keys ADD COLUMN IF NOT EXISTS user_id INTEGER");
             stmt.execute("ALTER TABLE activation_keys ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
@@ -138,7 +148,7 @@ public final class DatabaseMigration {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)");
 
-            log.info("Database migration completed (auth, generation_records.*, activation_keys.*, inspiration_prompts, chat_*)");
+            log.info("Database migration completed (auth, generation_records.*, distributed_locks, activation_keys.*, inspiration_prompts, chat_*)");
         } catch (SQLException e) {
             throw new IllegalStateException("Database migration failed: " + e.getMessage(), e);
         }

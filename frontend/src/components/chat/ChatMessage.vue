@@ -56,7 +56,7 @@ function normalizeSourceImageUrl(path) {
       <template v-else>
         <div v-if="isProcessing" class="assistant-loading">
           <span class="spin">⟳</span>
-          <span>正在生成图片…</span>
+          <span>我知道你很急，但是你先别急</span>
         </div>
         <div v-else-if="isFailed" class="assistant-error">
           <span>生成失败</span>
