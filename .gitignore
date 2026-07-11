@@ -19,6 +19,14 @@ chatimg2/src/env/.env
 .DS_Store
 Thumbs.db
 
-# Images backup
+# Runtime image backup. Keep the crawler media folders visible, but ignore generated media.
+img/*
+!img/
+!img/upimg/
+!img/upvideo/
+!img/upimg/.gitkeep
+!img/upvideo/.gitkeep
+
+# Legacy backend-module runtime image directory.
 chatimg2/img/
 nul

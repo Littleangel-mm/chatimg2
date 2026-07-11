@@ -149,7 +149,7 @@ public class InspirationCrawlerService {
             for (JsonNode item : items) {
                 String externalId = text(item, "id");
                 String prompt = text(item, "prompt");
-                String remoteUrl = text(item, "imageUrl");
+                String remoteUrl = resolveMediaUrl(item, type);
                 if (prompt == null || prompt.isBlank()) {
                     continue;
                 }
@@ -248,6 +248,8 @@ public class InspirationCrawlerService {
             Request request = new Request.Builder()
                     .url(remoteUrl)
                     .header("User-Agent", "Mozilla/5.0")
+                    .header("Accept", "video/*,image/*,*/*")
+                    .header("Referer", "https://img2.ai/")
                     .get()
                     .build();
             try (Response response = client().newCall(request).execute()) {
@@ -261,6 +263,7 @@ public class InspirationCrawlerService {
             }
             String localPath = folder + "/" + fileName;
             writePromptJson(dir.resolve(baseName + ".json"), item, mediaType, remoteUrl, localPath, sortOrder);
+            log.info("Downloaded inspiration media: {} -> img/{}", remoteUrl, localPath);
             return localPath;
         } catch (Exception e) {
             log.warn("Download inspiration media error {}: {}", remoteUrl, e.getMessage());
@@ -273,6 +276,16 @@ public class InspirationCrawlerService {
                 ? externalId
                 : Integer.toUnsignedString(remoteUrl.hashCode(), 36);
         return raw.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private static String resolveMediaUrl(JsonNode item, String mediaType) {
+        if ("video".equals(mediaType)) {
+            String video = firstText(item, "videoUrl", "mediaUrl", "fileUrl", "url", "src", "sourceUrl");
+            if (video != null && !video.isBlank()) {
+                return video;
+            }
+        }
+        return firstText(item, "imageUrl", "coverUrl", "thumbnailUrl", "mediaUrl", "fileUrl", "url", "src", "sourceUrl");
     }
 
     private void writePromptJson(Path jsonPath, JsonNode item, String mediaType, String sourceUrl,
@@ -328,6 +341,16 @@ public class InspirationCrawlerService {
     private static String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
         return value != null && !value.isNull() ? value.asText() : null;
+    }
+
+    private static String firstText(JsonNode node, String... fields) {
+        for (String field : fields) {
+            String value = text(node, field);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private static String truncate(String text) {

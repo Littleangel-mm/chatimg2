@@ -22,7 +22,9 @@ spring.datasource.hikari.keepalive-time=15000
 spring.datasource.hikari.max-lifetime=180000
 spring.datasource.hikari.idle-timeout=60000
 
-# 生成图片本地保存目录（启动时自动创建，使用绝对路径）
+# 运行时图片/视频本地保存目录（启动时自动创建）
+# 相对路径会按应用所在目录解析：/opt/chatimg2/chatimg2.jar -> /opt/chatimg2/img/
+# 如需放到 chatimg2 目录的同级目录，可配置为 ../img/ 或直接使用绝对路径
 app.image.backup-path=./img/
 
 # API config
