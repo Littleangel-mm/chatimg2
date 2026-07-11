@@ -74,6 +74,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   const pendingPrompt = ref('')
   let remoteSyncTimer = null
   let remoteLoading = false
+  let remoteSyncing = false
   let pendingRemoteSync = false
 
   const activeConversation = computed(() =>
@@ -167,7 +168,7 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   function scheduleRemoteSync() {
     if (!hasAuthToken()) return
-    if (remoteLoading) {
+    if (remoteLoading || remoteSyncing) {
       pendingRemoteSync = true
       return
     }
@@ -179,17 +180,29 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   async function syncRemote() {
     if (!hasAuthToken()) return false
-    if (remoteLoading) {
+    clearTimeout(remoteSyncTimer)
+    if (remoteLoading || remoteSyncing) {
       pendingRemoteSync = true
       return false
     }
     pendingRemoteSync = false
-    const { data } = await api.post('/chat/sync', toRemotePayload())
-    return data.code === 200
+    remoteSyncing = true
+    try {
+      const { data } = await api.post('/chat/sync', toRemotePayload())
+      return data.code === 200
+    } catch (error) {
+      console.warn('Chat sync failed', error)
+      return false
+    } finally {
+      remoteSyncing = false
+      if (pendingRemoteSync) {
+        scheduleRemoteSync()
+      }
+    }
   }
 
   async function loadRemote() {
-    if (!hasAuthToken() || remoteLoading) return false
+    if (!hasAuthToken() || remoteLoading || remoteSyncing) return false
     remoteLoading = true
     try {
       const { data } = await api.get('/chat/sync')

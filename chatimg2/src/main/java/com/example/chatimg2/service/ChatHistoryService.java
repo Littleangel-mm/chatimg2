@@ -10,6 +10,7 @@ import com.example.chatimg2.entity.UserAccount;
 import com.example.chatimg2.repository.ChatConversationRepository;
 import com.example.chatimg2.repository.ChatMessageRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ChatHistoryService {
 
     private final ChatConversationRepository conversationRepository;
@@ -55,6 +57,11 @@ public class ChatHistoryService {
     @Transactional
     public ChatSyncResponse sync(UserAccount user, ChatSyncRequest request) {
         List<ChatConversationDto> incoming = request.getConversations() == null ? List.of() : request.getConversations();
+        int messageCount = incoming.stream()
+                .mapToInt(conversation -> conversation.getMessages() == null ? 0 : conversation.getMessages().size())
+                .sum();
+        log.info("Chat sync start: user={}, conversations={}, messages={}",
+                user.getEmail(), incoming.size(), messageCount);
         Set<String> incomingClientIds = new HashSet<>();
 
         List<ChatConversation> existing = conversationRepository.findTop100ByUserIdOrderByUpdatedAtDesc(user.getId());

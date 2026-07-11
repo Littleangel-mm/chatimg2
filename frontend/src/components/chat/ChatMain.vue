@@ -237,6 +237,7 @@ async function send() {
 
   prompt.value = ''
   scrollToBottom()
+  await convStore.syncRemote().catch(() => false)
 
   try {
     const record = await userStore.generate({
@@ -247,11 +248,13 @@ async function send() {
     })
     convStore.syncRecord(record)
     convStore.attachRecordToMessage(exchange?.assistantMsg?.id, record)
+    convStore.syncRemote().catch(() => false)
     if (isImg2img) clearSource()
   } catch (e) {
     const msg = e.response?.data?.message || e.message || '\u751f\u6210\u5931\u8d25'
     convStore.failLatestAssistant(msg)
     error.value = msg
+    convStore.syncRemote().catch(() => false)
   }
 
   scrollToBottom()
