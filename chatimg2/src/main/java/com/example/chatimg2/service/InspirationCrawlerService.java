@@ -5,6 +5,8 @@ import com.example.chatimg2.entity.InspirationPrompt;
 import com.example.chatimg2.repository.InspirationPromptRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
@@ -39,6 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 @Service
 public class InspirationCrawlerService {
+
+    private static final String PROMPT_MANIFEST_NAME = "prompts.json";
 
     private final InspirationPromptRepository repository;
     private final ImageStorageConfig storageConfig;
@@ -122,6 +126,7 @@ public class InspirationCrawlerService {
 
         log.info("Inspiration crawl start: mediaType={}", type);
         logSystemProxyChoice();
+        cleanupLegacyPromptJson(type);
         while (hasMore && page <= maxPages) {
             JsonNode data;
             try {
@@ -267,7 +272,7 @@ public class InspirationCrawlerService {
                 }
             }
             String localPath = folder + "/" + fileName;
-            writePromptJson(dir.resolve(baseName + ".json"), item, mediaType, remoteUrl, localPath, sortOrder);
+            writePromptManifest(dir, item, mediaType, remoteUrl, localPath, sortOrder);
             log.info("Downloaded inspiration media: {} -> img/{}", remoteUrl, localPath);
             return localPath;
         } catch (Exception e) {
@@ -300,9 +305,39 @@ public class InspirationCrawlerService {
         return findNestedMediaUrl(item, mediaType, 0);
     }
 
-    private void writePromptJson(Path jsonPath, JsonNode item, String mediaType, String sourceUrl,
-                                 String localPath, int sortOrder) throws IOException {
-        Map<String, Object> data = new LinkedHashMap<>();
+    private void cleanupLegacyPromptJson(String mediaType) {
+        Path dir = "video".equals(mediaType) ? storageConfig.getUpvideoDir() : storageConfig.getUpimgDir();
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try (var files = Files.list(dir)) {
+            long deleted = files
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".json"))
+                    .filter(path -> !PROMPT_MANIFEST_NAME.equals(path.getFileName().toString()))
+                    .map(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                            return 1L;
+                        } catch (IOException e) {
+                            log.warn("Delete legacy inspiration prompt json failed {}: {}", path.getFileName(), e.getMessage());
+                            return 0L;
+                        }
+                    })
+                    .reduce(0L, Long::sum);
+            if (deleted > 0) {
+                log.info("Deleted {} legacy inspiration prompt json files from {}", deleted, dir);
+            }
+        } catch (IOException e) {
+            log.warn("Cleanup legacy inspiration prompt json failed: {}", e.getMessage());
+        }
+    }
+
+    private void writePromptManifest(Path dir, JsonNode item, String mediaType, String sourceUrl,
+                                     String localPath, int sortOrder) throws IOException {
+        Path manifestPath = dir.resolve(PROMPT_MANIFEST_NAME);
+        Map<String, JsonNode> entries = readPromptManifestItems(manifestPath);
+        ObjectNode data = objectMapper.createObjectNode();
         data.put("externalId", text(item, "id"));
         data.put("mediaType", mediaType);
         data.put("category", text(item, "category"));
@@ -312,7 +347,45 @@ public class InspirationCrawlerService {
         data.put("localPath", localPath);
         data.put("sortOrder", sortOrder);
         data.put("crawledAt", System.currentTimeMillis());
-        objectMapper.writerWithDefaultPrettyPrinter().writeValue(jsonPath.toFile(), data);
+        entries.put(manifestKey(data), data);
+
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("mediaType", mediaType);
+        root.put("updatedAt", System.currentTimeMillis());
+        ArrayNode items = root.putArray("items");
+        entries.values().forEach(items::add);
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(manifestPath.toFile(), root);
+    }
+
+    private Map<String, JsonNode> readPromptManifestItems(Path manifestPath) {
+        Map<String, JsonNode> entries = new LinkedHashMap<>();
+        if (!Files.isRegularFile(manifestPath)) {
+            return entries;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(manifestPath.toFile());
+            JsonNode items = root.get("items");
+            if (items != null && items.isArray()) {
+                for (JsonNode item : items) {
+                    entries.put(manifestKey(item), item);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Read inspiration prompt manifest failed {}: {}", manifestPath.getFileName(), e.getMessage());
+        }
+        return entries;
+    }
+
+    private static String manifestKey(JsonNode item) {
+        String externalId = text(item, "externalId");
+        if (externalId != null && !externalId.isBlank()) {
+            return "external:" + externalId;
+        }
+        String localPath = text(item, "localPath");
+        if (localPath != null && !localPath.isBlank()) {
+            return "local:" + localPath;
+        }
+        return "item:" + item.hashCode();
     }
 
     private OkHttpClient client() {
