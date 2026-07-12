@@ -132,8 +132,10 @@ public final class DatabaseMigration {
             stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
             stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS client_id VARCHAR(80)");
             stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS conversation_type VARCHAR(20) NOT NULL DEFAULT 'text2img'");
+            stmt.execute("ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_user_id ON chat_conversations(user_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_client_id ON chat_conversations(client_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_active_user ON chat_conversations(user_id, deleted_at, updated_at DESC)");
 
             stmt.execute("CREATE TABLE IF NOT EXISTS chat_messages (" +
                     "id SERIAL PRIMARY KEY, " +

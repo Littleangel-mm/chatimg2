@@ -9,4 +9,5 @@ import java.util.List;
 public class ChatSyncRequest {
     private String activeId;
     private List<ChatConversationDto> conversations = new ArrayList<>();
+    private List<String> deletedClientIds = new ArrayList<>();
 }

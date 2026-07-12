@@ -48,9 +48,7 @@ function cancelRename() {
 
 function onDelete() {
   open.value = false
-  if (confirm(`确定删除「${props.conversation.title}」？`)) {
-    emit('delete', props.conversation.id)
-  }
+  emit('delete', props.conversation.id)
 }
 
 function onClickOutside(e) {

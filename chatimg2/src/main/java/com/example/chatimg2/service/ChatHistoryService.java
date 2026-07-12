@@ -37,7 +37,7 @@ public class ChatHistoryService {
 
     @Transactional(readOnly = true)
     public ChatSyncResponse load(UserAccount user) {
-        List<ChatConversation> conversations = conversationRepository.findTop100ByUserIdOrderByUpdatedAtDesc(user.getId());
+        List<ChatConversation> conversations = conversationRepository.findTop100ByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(user.getId());
         List<Integer> ids = conversations.stream().map(ChatConversation::getId).toList();
         Map<Integer, List<ChatMessage>> messagesByConversation = new HashMap<>();
         if (!ids.isEmpty()) {
@@ -63,12 +63,23 @@ public class ChatHistoryService {
         log.info("Chat sync start: user={}, conversations={}, messages={}",
                 user.getEmail(), incoming.size(), messageCount);
         Set<String> incomingClientIds = new HashSet<>();
+        Set<String> deletedClientIds = normalizedClientIds(request.getDeletedClientIds());
 
-        List<ChatConversation> existing = conversationRepository.findTop100ByUserIdOrderByUpdatedAtDesc(user.getId());
+        List<ChatConversation> existing = conversationRepository.findTop200ByUserIdOrderByUpdatedAtDesc(user.getId());
         Map<String, ChatConversation> existingByClientId = new HashMap<>();
         for (ChatConversation conversation : existing) {
             if (conversation.getClientId() != null) {
                 existingByClientId.put(conversation.getClientId(), conversation);
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        for (String clientId : deletedClientIds) {
+            ChatConversation conversation = existingByClientId.get(clientId);
+            if (conversation != null && conversation.getDeletedAt() == null) {
+                conversation.setDeletedAt(now);
+                conversation.setUpdatedAt(now);
+                conversationRepository.save(conversation);
             }
         }
 
@@ -77,9 +88,15 @@ public class ChatHistoryService {
             if (clientId == null) {
                 continue;
             }
+            if (deletedClientIds.contains(clientId)) {
+                continue;
+            }
             incomingClientIds.add(clientId);
 
             ChatConversation conversation = existingByClientId.getOrDefault(clientId, new ChatConversation());
+            if (conversation.getDeletedAt() != null) {
+                continue;
+            }
             conversation.setUserId(user.getId());
             conversation.setUserEmail(authService.normalizeEmail(user.getEmail()));
             conversation.setClientId(clientId);
@@ -98,8 +115,12 @@ public class ChatHistoryService {
 
         for (ChatConversation conversation : existing) {
             String clientId = conversation.getClientId();
-            if (clientId != null && !incomingClientIds.contains(clientId)) {
-                conversationRepository.delete(conversation);
+            if (clientId != null
+                    && conversation.getDeletedAt() == null
+                    && !incomingClientIds.contains(clientId)) {
+                conversation.setDeletedAt(now);
+                conversation.setUpdatedAt(now);
+                conversationRepository.save(conversation);
             }
         }
 
@@ -174,6 +195,20 @@ public class ChatHistoryService {
             return null;
         }
         return clientId.trim();
+    }
+
+    private Set<String> normalizedClientIds(List<String> clientIds) {
+        Set<String> values = new HashSet<>();
+        if (clientIds == null) {
+            return values;
+        }
+        for (String clientId : clientIds) {
+            String normalized = normalizedClientId(clientId);
+            if (normalized != null) {
+                values.add(normalized);
+            }
+        }
+        return values;
     }
 
     private String safeTitle(String title) {

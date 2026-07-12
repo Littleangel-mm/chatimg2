@@ -29,6 +29,7 @@ public class AsyncGenerationExecutor {
 
     private static final String TEXT2IMG_MODEL = "gpt-image-2";
     private static final String IMG2IMG_MODEL = "gpt-image-2";
+    private static final String CONTENT_POLICY_ADVICE_PREFIX = "CONTENT_POLICY_ADVICE:";
     private static final String IMG2IMG_USER_ERROR = "生成失败，请更换图片重试";
     private static final String TEXT2IMG_USER_ERROR = "生成失败，请稍后重试";
 
@@ -49,7 +50,7 @@ public class AsyncGenerationExecutor {
             }
         } catch (Exception e) {
             log.error("Async generation failed before start: recordId={}, taskCode={}", recordId, taskCode, e);
-            markGenerationFailed(recordId, keyId, userId, generationType);
+            markGenerationFailed(recordId, keyId, userId, generationType, e);
             return;
         }
         long startedAt = System.currentTimeMillis();
@@ -58,7 +59,7 @@ public class AsyncGenerationExecutor {
             runLockedGeneration(recordId, taskCode, prompt, generationType, sourceImagePath, ownerFolder, startedAt);
         } catch (Exception e) {
             log.error("Async generation failed: recordId={}, taskCode={}", recordId, taskCode, e);
-            markGenerationFailed(recordId, keyId, userId, generationType);
+            markGenerationFailed(recordId, keyId, userId, generationType, e);
         } finally {
             distributedLockService.release(lockKey);
         }
@@ -88,13 +89,53 @@ public class AsyncGenerationExecutor {
                 recordId, taskCode, System.currentTimeMillis() - startedAt);
     }
 
-    private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType) {
-        String userMessage = "img2img".equals(generationType) ? IMG2IMG_USER_ERROR : TEXT2IMG_USER_ERROR;
+    private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType, Throwable error) {
+        String userMessage = resolveUserMessage(generationType, error);
         if (userId != null) {
             recordService.markFailedForUser(recordId, userId, userMessage);
         } else {
             recordService.markFailed(recordId, keyId, userMessage);
         }
+    }
+
+    private String resolveUserMessage(String generationType, Throwable error) {
+        String contentPolicyMessage = extractContentPolicyMessage(error);
+        if (contentPolicyMessage != null) {
+            return contentPolicyMessage;
+        }
+        return "img2img".equals(generationType) ? IMG2IMG_USER_ERROR : TEXT2IMG_USER_ERROR;
+    }
+
+    private String extractContentPolicyMessage(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            String message = current.getMessage();
+            String advice = extractAdviceFromMessage(message);
+            if (advice != null) {
+                return CONTENT_POLICY_ADVICE_PREFIX + advice;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private String extractAdviceFromMessage(String message) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        int markerIndex = message.indexOf(CONTENT_POLICY_ADVICE_PREFIX);
+        if (markerIndex >= 0) {
+            String cleaned = message.substring(markerIndex + CONTENT_POLICY_ADVICE_PREFIX.length()).trim();
+            return cleaned.isBlank() ? null : cleaned;
+        }
+
+        String legacyPrefix = "内容安全提示：";
+        int legacyIndex = message.indexOf(legacyPrefix);
+        if (legacyIndex >= 0) {
+            String cleaned = message.substring(legacyIndex + legacyPrefix.length()).trim();
+            return cleaned.isBlank() ? null : cleaned;
+        }
+        return null;
     }
 
     private Path resolveSourcePath(String sourceImagePath) {

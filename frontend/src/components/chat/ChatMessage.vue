@@ -8,6 +8,8 @@ const props = defineProps({
 })
 
 const convStore = useConversationsStore()
+const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
+const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeSourceImageUrl(props.message.sourceImage))
@@ -21,6 +23,9 @@ const isFailed = computed(() => {
   const status = (props.message.record?.status || props.message.status || '').toLowerCase()
   return status === 'failed'
 })
+const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
+const isPolicyAdvice = computed(() => !!policyAdviceText.value)
+const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
 
 function normalizeSourceImageUrl(path) {
   if (!path) return ''
@@ -34,6 +39,19 @@ function normalizeSourceImageUrl(path) {
     return `${IMAGE_BASE_PATH}${normalized.slice(sourcesIndex + 1)}`
   }
   return `${IMAGE_BASE_PATH}${normalized}`
+}
+
+function extractPolicyAdvice(text) {
+  if (!text) return ''
+  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
+  }
+  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
+  if (legacyIndex >= 0) {
+    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
+  }
+  return ''
 }
 </script>
 
@@ -58,9 +76,12 @@ function normalizeSourceImageUrl(path) {
           <span class="spin">⟳</span>
           <span>我知道你很急，但是你先别急</span>
         </div>
+        <div v-else-if="isFailed && isPolicyAdvice" class="assistant-advice">
+          <p>{{ displayError }}</p>
+        </div>
         <div v-else-if="isFailed" class="assistant-error">
           <span>生成失败</span>
-          <p v-if="message.errorMessage">{{ message.errorMessage }}</p>
+          <p v-if="displayError">{{ displayError }}</p>
         </div>
         <div v-else-if="imageUrl" class="assistant-image">
           <img :src="imageUrl" :alt="message.record?.prompt || '生成结果'" loading="lazy" />
@@ -181,6 +202,19 @@ function normalizeSourceImageUrl(path) {
   margin-top: 6px;
   font-size: 13px;
   opacity: 0.85;
+}
+
+.assistant-advice {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 0;
+}
+
+.assistant-advice p {
+  margin: 0;
 }
 
 .assistant-image img {

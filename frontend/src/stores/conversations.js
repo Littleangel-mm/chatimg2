@@ -4,6 +4,8 @@ import api from '../api'
 import { getImageUrl } from '../api'
 
 const STORAGE_PREFIX = 'conversations_'
+const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
+const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 
 function storageKey(keyCode) {
   return `${STORAGE_PREFIX}${keyCode || 'guest'}`
@@ -38,6 +40,10 @@ function resolveRecordStatus(record) {
 
 function friendlyGenerationError(message, record = null) {
   const text = message || ''
+  const policyAdvice = extractPolicyAdvice(text)
+  if (policyAdvice) {
+    return `${POLICY_ADVICE_PREFIX}${policyAdvice}`
+  }
   const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
   if (record?.generationType === 'img2img' || rawApiError) {
     return '生成失败，请更换图片重试'
@@ -45,9 +51,31 @@ function friendlyGenerationError(message, record = null) {
   return text || '生成失败'
 }
 
+function extractPolicyAdvice(text) {
+  if (!text) return ''
+  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
+  }
+  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
+  if (legacyIndex >= 0) {
+    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
+  }
+  return ''
+}
+
 function recordCreatedTime(record) {
   const time = new Date(record?.createdAt || 0).getTime()
   return Number.isFinite(time) ? time : 0
+}
+
+function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
+  const current = msg.record || {}
+  return !recordIdEquals(msg.recordId || current.id, record.id) ||
+    resolveRecordStatus(msg.record || { status: msg.status }) !== nextStatus ||
+    (current.imagePath || '') !== (record.imagePath || '') ||
+    (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
+    (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
 
 function recordMatchesConversation(record, conv, userMsg = null) {
@@ -72,6 +100,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   const sidebarOpen = ref(true)
   const boundKeyCode = ref('')
   const pendingPrompt = ref('')
+  const deletedConversationIds = ref(new Set())
   let remoteSyncTimer = null
   let remoteLoading = false
   let remoteSyncing = false
@@ -89,7 +118,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (boundKeyCode.value) {
       writeStored(boundKeyCode.value, {
         conversations: conversations.value,
-        activeId: activeId.value
+        activeId: activeId.value,
+        deletedConversationIds: [...deletedConversationIds.value]
       })
     }
     scheduleRemoteSync()
@@ -102,20 +132,22 @@ export const useConversationsStore = defineStore('conversations', () => {
     const stored = readStored(normalized)
     conversations.value = stored?.conversations ?? []
     activeId.value = stored?.activeId ?? conversations.value[0]?.id ?? null
+    deletedConversationIds.value = new Set(stored?.deletedConversationIds ?? [])
   }
 
   function clearAll() {
+    for (const conv of conversations.value) {
+      if (conv.id) deletedConversationIds.value.add(conv.id)
+    }
     conversations.value = []
     activeId.value = null
-    if (boundKeyCode.value) {
-      localStorage.removeItem(storageKey(boundKeyCode.value))
-    }
-    scheduleRemoteSync()
+    persist()
   }
 
   function toRemotePayload() {
     return {
       activeId: activeId.value,
+      deletedClientIds: [...deletedConversationIds.value],
       conversations: conversations.value.map(conv => ({
         clientId: conv.id,
         title: conv.title,
@@ -138,9 +170,19 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   function applyRemotePayload(payload) {
     const remoteConversations = payload?.conversations || []
-    if (!remoteConversations.length) return false
+    if (!remoteConversations.length) {
+      return false
+    }
 
-    conversations.value = remoteConversations.map(conv => ({
+    let filteredDeleted = false
+    conversations.value = remoteConversations
+      .filter(conv => {
+        const clientId = conv.clientId
+        const keep = !clientId || !deletedConversationIds.value.has(clientId)
+        if (!keep) filteredDeleted = true
+        return keep
+      })
+      .map(conv => ({
       id: conv.clientId || uid(),
       title: conv.title || defaultTitle('', conv.type),
       type: conv.type === 'img2img' ? 'img2img' : 'text2img',
@@ -158,11 +200,17 @@ export const useConversationsStore = defineStore('conversations', () => {
         createdAt: msg.createdAt || Date.now()
       }))
     }))
-    activeId.value = payload.activeId || conversations.value[0]?.id || null
+    activeId.value = conversations.value.some(conv => conv.id === payload.activeId)
+      ? payload.activeId
+      : conversations.value[0]?.id || null
     writeStored(boundKeyCode.value, {
       conversations: conversations.value,
-      activeId: activeId.value
+      activeId: activeId.value,
+      deletedConversationIds: [...deletedConversationIds.value]
     })
+    if (filteredDeleted) {
+      scheduleRemoteSync()
+    }
     return true
   }
 
@@ -189,6 +237,16 @@ export const useConversationsStore = defineStore('conversations', () => {
     remoteSyncing = true
     try {
       const { data } = await api.post('/chat/sync', toRemotePayload())
+      if (data.code === 200 && deletedConversationIds.value.size) {
+        deletedConversationIds.value = new Set()
+        if (boundKeyCode.value) {
+          writeStored(boundKeyCode.value, {
+            conversations: conversations.value,
+            activeId: activeId.value,
+            deletedConversationIds: []
+          })
+        }
+      }
       return data.code === 200
     } catch (error) {
       console.warn('Chat sync failed', error)
@@ -260,6 +318,9 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function deleteConversation(id) {
+    if (id) {
+      deletedConversationIds.value.add(id)
+    }
     conversations.value = conversations.value.filter(c => c.id !== id)
     if (activeId.value === id) {
       activeId.value = conversations.value[0]?.id ?? null
@@ -314,12 +375,18 @@ export const useConversationsStore = defineStore('conversations', () => {
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
         if (recordIdEquals(msg.recordId, record.id) || recordIdEquals(msg.record?.id, record.id)) {
-          msg.recordId = record.id
-          msg.record = { ...record }
-          msg.status = resolveRecordStatus(record)
-          msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
-          attachSourceImagePath(conv, msg, record)
-          changed = true
+          const nextStatus = resolveRecordStatus(record)
+          const nextErrorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
+          if (recordChangedForMessage(msg, record, nextStatus, nextErrorMessage)) {
+            msg.recordId = record.id
+            msg.record = { ...record }
+            msg.status = nextStatus
+            msg.errorMessage = nextErrorMessage
+            if (attachSourceImagePath(conv, msg, record)) {
+              changed = true
+            }
+            changed = true
+          }
           matched = true
         }
       }
@@ -343,13 +410,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function attachSourceImagePath(conv, assistantMsg, record) {
-    if (!record?.sourceImagePath) return
+    if (!record?.sourceImagePath) return false
     const index = conv.messages.findIndex(msg => msg.id === assistantMsg.id)
-    if (index <= 0) return
+    if (index <= 0) return false
     const userMsg = conv.messages[index - 1]
-    if (!userMsg || userMsg.role !== 'user') return
-    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return
+    if (!userMsg || userMsg.role !== 'user') return false
+    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
     userMsg.sourceImage = record.sourceImagePath
+    return true
   }
 
   function attachRecordToMessage(messageId, record) {

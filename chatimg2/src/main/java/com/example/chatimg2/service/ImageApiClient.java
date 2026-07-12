@@ -25,6 +25,7 @@ public class ImageApiClient {
 
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final String CONTENT_POLICY_ADVICE_PREFIX = "CONTENT_POLICY_ADVICE:";
 
     @Value("${app.api.key}")
     private String apiKey;
@@ -53,6 +54,15 @@ public class ImageApiClient {
     @Value("${app.api.http.poll-read-timeout-ms:60000}")
     private long pollReadTimeoutMs;
 
+    @Value("${app.api.submit.max-attempts:3}")
+    private int submitMaxAttempts;
+
+    @Value("${app.api.submit.retry-delay-ms:3000}")
+    private long submitRetryDelayMs;
+
+    @Value("${app.api.compat.maitokens-www-to-wcf:true}")
+    private boolean maitokensWwwToWcf;
+
     private static final Set<String> COMPLETED_STATUSES = Set.of(
             "completed", "success", "succeeded", "done", "finished"
     );
@@ -69,6 +79,7 @@ public class ImageApiClient {
 
     @jakarta.annotation.PostConstruct
     void initHttpClients() {
+        log.info("Image API base URL: configured={}, resolved={}", sanitizeBaseUrl(apiUrl), getApiBaseUrl());
         this.submitClient = new OkHttpClient.Builder()
                 .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
                 .readTimeout(submitReadTimeoutMs, TimeUnit.MILLISECONDS)
@@ -215,17 +226,45 @@ public class ImageApiClient {
     }
 
     private String resolveImageFromSubmit(Request request) throws IOException {
-        try (Response response = submitClient.newCall(request).execute()) {
-            String responseBody = response.body() != null ? response.body().string() : "";
-            if (!response.isSuccessful()) {
-                log.error("API call failed: {} - {}", response.code(), responseBody);
-                throw new RuntimeException("API调用失败: " + response.code() + " - " + extractApiError(responseBody));
+        int attempts = Math.max(1, submitMaxAttempts);
+        RuntimeException lastError = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try (Response response = submitClient.newCall(request).execute()) {
+                String responseBody = response.body() != null ? response.body().string() : "";
+                if (!response.isSuccessful()) {
+                    RuntimeException error = new RuntimeException("API调用失败: " + response.code() + " - " + extractApiError(responseBody));
+                    lastError = error;
+                    if (isRetryableSubmitStatus(response.code()) && attempt < attempts) {
+                        log.warn("API submit failed transiently, retry {}/{} after HTTP {}: {}",
+                                attempt, attempts, response.code(), truncate(responseBody, 300));
+                        sleepBeforeSubmitRetry();
+                        continue;
+                    }
+                    log.error("API call failed: {} - {}", response.code(), responseBody);
+                    throw error;
+                }
+                log.debug("API submit response: {}", truncate(responseBody, 500));
+                return resolveImageFromJson(objectMapper.readTree(responseBody));
+            } catch (java.net.SocketTimeoutException e) {
+                RuntimeException error = new RuntimeException("API 连接超时（生图耗时较长），请稍后重试", e);
+                lastError = error;
+                if (attempt < attempts) {
+                    log.warn("API submit timed out, retry {}/{}", attempt, attempts);
+                    sleepBeforeSubmitRetry();
+                    continue;
+                }
+                throw error;
             }
-            log.debug("API submit response: {}", truncate(responseBody, 500));
-            return resolveImageFromJson(objectMapper.readTree(responseBody));
-        } catch (java.net.SocketTimeoutException e) {
-            throw new RuntimeException("API 连接超时（生图耗时较长），请稍后重试", e);
         }
+        throw lastError != null ? lastError : new RuntimeException("API submit failed");
+    }
+
+    private boolean isRetryableSubmitStatus(int statusCode) {
+        return statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504 || statusCode == 524;
+    }
+
+    private void sleepBeforeSubmitRetry() {
+        sleepQuietly(Math.max(0, submitRetryDelayMs));
     }
 
     private String resolveImageFromJson(JsonNode root) throws IOException {
@@ -473,7 +512,13 @@ public class ImageApiClient {
             JsonNode root = objectMapper.readTree(errorBody);
             JsonNode err = root.get("error");
             if (err != null && err.has("message")) {
-                return err.get("message").asText();
+                String message = err.get("message").asText();
+                String type = err.has("type") ? err.get("type").asText("") : "";
+                String code = err.has("code") && !err.get("code").isNull() ? err.get("code").asText("") : "";
+                if ("image_generation_user_error".equals(type) || "content_policy_violation".equals(code)) {
+                    return CONTENT_POLICY_ADVICE_PREFIX + message;
+                }
+                return message;
             }
         } catch (Exception ignored) {
         }
@@ -490,10 +535,17 @@ public class ImageApiClient {
         if (baseUrl.endsWith("/v1")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 3);
         }
-        if (baseUrl.equals("https://www.maitokens.com")) {
-            baseUrl = "https://wcf.maitokens.com";
+        if (maitokensWwwToWcf && baseUrl.equals("https://www.maitokens.com")) {
+            return "https://wcf.maitokens.com";
         }
         return baseUrl;
+    }
+
+    private String sanitizeBaseUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return "https://www.maitokens.com";
+        }
+        return value.trim();
     }
 
     private void sleepQuietly(long millis) {
