@@ -29,16 +29,48 @@ generateApi.interceptors.request.use(attachAuth)
 /** 与后端静态资源路径一致，数据库只存相对路径，前端拼接展示 */
 export const IMAGE_BASE_PATH = '/img/'
 
+export function normalizeImageUrl(path) {
+  if (!path) return ''
+  if (path.startsWith('data:')) return path
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+
+  let normalized = String(path).replaceAll('\\', '/')
+  const imgIndex = normalized.lastIndexOf('/img/')
+  if (imgIndex >= 0) {
+    normalized = normalized.slice(imgIndex + '/img/'.length)
+  } else if (normalized.startsWith('/img/')) {
+    normalized = normalized.slice('/img/'.length)
+  } else if (normalized.startsWith('img/')) {
+    normalized = normalized.slice('img/'.length)
+  } else if (normalized.startsWith('/')) {
+    return normalized
+  }
+
+  normalized = normalized.replace(/^\/+/, '')
+  if (!normalized) return ''
+  const encoded = normalized
+    .split('/')
+    .filter(Boolean)
+    .map(encodePathPart)
+    .join('/')
+  return `${IMAGE_BASE_PATH}${encoded}`
+}
+
+function encodePathPart(part) {
+  try {
+    return encodeURIComponent(decodeURIComponent(part))
+  } catch {
+    return encodeURIComponent(part)
+  }
+}
+
 export default api
 export { generateApi }
 
 export function getImageUrl(record) {
   if (!record) return ''
   const path = record.imagePath || record.imageUrl || ''
-  if (!path) return ''
-  if (path.startsWith('http://') || path.startsWith('https://')) return path
-  if (path.startsWith('/')) return path
-  return `${IMAGE_BASE_PATH}${path}`
+  return normalizeImageUrl(path)
 }
 
 /** 灵感画廊图片地址：本地相对路径拼 /img/，远程 URL 直接使用 */
@@ -54,7 +86,7 @@ export function getInspirationImageUrl(item) {
   if (!path) return ''
   let url = path
   if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/')) {
-    url = `${IMAGE_BASE_PATH}${path}`
+    url = normalizeImageUrl(path)
   }
   return appendCacheBust(url, item.updatedAt)
 }

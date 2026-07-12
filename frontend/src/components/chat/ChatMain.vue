@@ -237,7 +237,6 @@ async function send() {
 
   prompt.value = ''
   scrollToBottom()
-  await convStore.syncRemote().catch(() => false)
 
   try {
     const record = await userStore.generate({

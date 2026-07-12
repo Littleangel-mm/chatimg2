@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
-import { IMAGE_BASE_PATH } from '../../api'
+import { normalizeImageUrl } from '../../api'
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -12,7 +12,7 @@ const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
 const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
-const sourceImageUrl = computed(() => normalizeSourceImageUrl(props.message.sourceImage))
+const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
 const isProcessing = computed(() => {
   const status = (props.message.record?.status || props.message.status || '').toLowerCase()
   if (status === 'completed' || status === 'failed') return false
@@ -26,20 +26,6 @@ const isFailed = computed(() => {
 const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
-
-function normalizeSourceImageUrl(path) {
-  if (!path) return ''
-  if (path.startsWith('data:')) return path
-  if (path.startsWith('http://') || path.startsWith('https://')) return path
-  if (path.startsWith('/')) return path
-
-  const normalized = path.replaceAll('\\', '/')
-  const sourcesIndex = normalized.indexOf('/sources/')
-  if (sourcesIndex >= 0) {
-    return `${IMAGE_BASE_PATH}${normalized.slice(sourcesIndex + 1)}`
-  }
-  return `${IMAGE_BASE_PATH}${normalized}`
-}
 
 function extractPolicyAdvice(text) {
   if (!text) return ''

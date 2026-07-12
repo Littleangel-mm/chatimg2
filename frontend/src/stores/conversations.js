@@ -391,10 +391,8 @@ export const useConversationsStore = defineStore('conversations', () => {
         }
       }
 
-      if (!matched && conv.id === activeId.value) {
-        const pending = [...conv.messages].reverse().find(
-          m => m.role === 'assistant' && m.status === 'processing' && !m.recordId
-        )
+      if (!matched) {
+        const pending = findPendingAssistantForRecord(conv, record)
         if (pending) {
           pending.recordId = record.id
           pending.record = { ...record }
@@ -409,15 +407,43 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (changed) persist()
   }
 
+  function findPendingAssistantForRecord(conv, record) {
+    const pending = [...(conv.messages || [])].reverse().find(msg => {
+      if (msg.role !== 'assistant' || msg.recordId || msg.record?.id) return false
+      const status = resolveRecordStatus(msg.record || { status: msg.status })
+      if (status !== 'processing') return false
+
+      const userMsg = previousUserMessage(conv, msg)
+      if (!userMsg) return false
+      if (record?.prompt && userMsg.content !== record.prompt) return false
+      return recordMatchesConversation(record, conv, userMsg)
+    })
+    if (pending) return pending
+
+    if (conv.id !== activeId.value) return null
+    return [...(conv.messages || [])].reverse().find(
+      msg => msg.role === 'assistant' && msg.status === 'processing' && !msg.recordId && !msg.record?.id
+    )
+  }
+
+  function previousUserMessage(conv, assistantMsg) {
+    const index = conv.messages.findIndex(msg => msg.id === assistantMsg.id)
+    if (index <= 0) return null
+    const userMsg = conv.messages[index - 1]
+    return userMsg?.role === 'user' ? userMsg : null
+  }
+
   function attachSourceImagePath(conv, assistantMsg, record) {
     if (!record?.sourceImagePath) return false
-    const index = conv.messages.findIndex(msg => msg.id === assistantMsg.id)
-    if (index <= 0) return false
-    const userMsg = conv.messages[index - 1]
-    if (!userMsg || userMsg.role !== 'user') return false
+    const userMsg = previousUserMessage(conv, assistantMsg)
+    if (!userMsg) return false
     if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
     userMsg.sourceImage = record.sourceImagePath
     return true
+  }
+
+  function messageSourceImageForAssistant(conv, assistantMsg) {
+    return previousUserMessage(conv, assistantMsg)?.sourceImage || ''
   }
 
   function attachRecordToMessage(messageId, record) {
@@ -435,6 +461,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     msg.record = { ...record }
     msg.status = resolveRecordStatus(record)
     msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
+    attachSourceImagePath(conv, msg, record)
     persist()
     return true
   }
@@ -472,11 +499,13 @@ export const useConversationsStore = defineStore('conversations', () => {
         const nextStatus = resolveRecordStatus(latest)
         const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
         const imageChanged = latest.imagePath !== msg.record?.imagePath
-        if (nextStatus !== prevStatus || imageChanged) {
+        const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
+        if (nextStatus !== prevStatus || imageChanged || sourceMissing) {
           msg.recordId = latest.id
           msg.record = { ...latest }
           msg.status = nextStatus
           msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
+          attachSourceImagePath(conv, msg, latest)
           changed = true
         }
       }
@@ -513,6 +542,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         msg.record = { ...latest }
         msg.status = resolveRecordStatus(latest)
         msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
+        attachSourceImagePath(conv, msg, latest)
         usedIds.add(Number(latest.id))
         changed = true
       }
