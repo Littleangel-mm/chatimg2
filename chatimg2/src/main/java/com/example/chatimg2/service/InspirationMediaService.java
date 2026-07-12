@@ -73,12 +73,7 @@ public class InspirationMediaService {
         if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
             return null;
         }
-        String normalized = normalizeLocalPath(imageUrl);
-        Path file = storageConfig.getBackupDir().resolve(normalized).normalize();
-        if (!file.startsWith(storageConfig.getBackupDir())) {
-            return null;
-        }
-        return file;
+        return storageConfig.resolveReadableImageFile(imageUrl);
     }
 
     private String resolveRemoteUrl(InspirationPrompt prompt) {
@@ -185,15 +180,4 @@ public class InspirationMediaService {
         return "application/octet-stream";
     }
 
-    private static String normalizeLocalPath(String path) {
-        String normalized = path.replace('\\', '/');
-        if (normalized.startsWith("/img/")) {
-            normalized = normalized.substring("/img/".length());
-        } else if (normalized.startsWith("img/")) {
-            normalized = normalized.substring("img/".length());
-        } else if (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        return normalized;
-    }
 }

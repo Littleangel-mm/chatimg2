@@ -17,9 +17,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -150,6 +152,9 @@ public class InspirationCrawlerService {
                 String externalId = text(item, "id");
                 String prompt = text(item, "prompt");
                 String remoteUrl = resolveMediaUrl(item, type);
+                if ((remoteUrl == null || remoteUrl.isBlank()) && indexInPage == 0) {
+                    log.warn("Inspiration item has no downloadable {} url. fields={}", type, fieldNames(item));
+                }
                 if (prompt == null || prompt.isBlank()) {
                     continue;
                 }
@@ -240,13 +245,14 @@ public class InspirationCrawlerService {
             Path dir = "video".equals(mediaType) ? storageConfig.getUpvideoDir() : storageConfig.getUpimgDir();
             Files.createDirectories(dir);
 
-            String ext = extractExtension(remoteUrl, mediaType);
+            String normalizedUrl = normalizeRemoteUrl(remoteUrl);
+            String ext = extractExtension(normalizedUrl, mediaType);
             String baseName = resolveBaseName(externalId, remoteUrl);
             String fileName = baseName + ext;
             Path target = dir.resolve(fileName);
 
             Request request = new Request.Builder()
-                    .url(remoteUrl)
+                    .url(normalizedUrl)
                     .header("User-Agent", "Mozilla/5.0")
                     .header("Accept", "video/*,image/*,*/*")
                     .header("Referer", "https://img2.ai/")
@@ -254,7 +260,16 @@ public class InspirationCrawlerService {
                     .build();
             try (Response response = client().newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
-                    log.warn("Download inspiration media failed {}: HTTP {}", remoteUrl, response.code());
+                    String body = response.body() != null ? truncate(response.body().string()) : "";
+                    log.warn("Download inspiration media failed {}: HTTP {}, contentType={}, body={}",
+                            normalizedUrl, response.code(), response.header("Content-Type"), body);
+                    return null;
+                }
+                String contentType = response.header("Content-Type");
+                if (isTextResponse(contentType)) {
+                    String body = truncate(response.body().string());
+                    log.warn("Download inspiration media skipped {}: unexpected contentType={}, body={}",
+                            normalizedUrl, contentType, body);
                     return null;
                 }
                 try (InputStream is = response.body().byteStream()) {
@@ -280,12 +295,19 @@ public class InspirationCrawlerService {
 
     private static String resolveMediaUrl(JsonNode item, String mediaType) {
         if ("video".equals(mediaType)) {
-            String video = firstText(item, "videoUrl", "mediaUrl", "fileUrl", "url", "src", "sourceUrl");
+            String video = firstText(item, "videoUrl", "video_url", "video", "mediaUrl", "media_url",
+                    "fileUrl", "file_url", "downloadUrl", "download_url", "url", "src", "sourceUrl", "source_url");
             if (video != null && !video.isBlank()) {
                 return video;
             }
         }
-        return firstText(item, "imageUrl", "coverUrl", "thumbnailUrl", "mediaUrl", "fileUrl", "url", "src", "sourceUrl");
+        String image = firstText(item, "imageUrl", "image_url", "image", "coverUrl", "cover_url",
+                "thumbnailUrl", "thumbnail_url", "thumbUrl", "thumb_url", "mediaUrl", "media_url",
+                "fileUrl", "file_url", "downloadUrl", "download_url", "url", "src", "sourceUrl", "source_url");
+        if (image != null && !image.isBlank()) {
+            return image;
+        }
+        return findNestedMediaUrl(item, mediaType, 0);
     }
 
     private void writePromptJson(Path jsonPath, JsonNode item, String mediaType, String sourceUrl,
@@ -347,10 +369,137 @@ public class InspirationCrawlerService {
         for (String field : fields) {
             String value = text(node, field);
             if (value != null && !value.isBlank()) {
+                if (isHttpUrl(value)) {
+                    return value;
+                }
+                String nested = extractUrlFromTextOrNode(value, node.get(field), null);
+                if (nested != null && !nested.isBlank()) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String findNestedMediaUrl(JsonNode node, String mediaType, int depth) {
+        if (node == null || node.isNull() || depth > 4) {
+            return null;
+        }
+        String direct = extractUrlFromTextOrNode(node.asText(null), node, mediaType);
+        if (direct != null) {
+            return direct;
+        }
+        if (node.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> entry = fields.next();
+                String fieldName = entry.getKey().toLowerCase();
+                JsonNode value = entry.getValue();
+                if (looksLikeMediaField(fieldName, mediaType)) {
+                    String url = extractUrlFromTextOrNode(value.asText(null), value, mediaType);
+                    if (url != null) {
+                        return url;
+                    }
+                }
+                String nested = findNestedMediaUrl(value, mediaType, depth + 1);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                String nested = findNestedMediaUrl(child, mediaType, depth + 1);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String extractUrlFromTextOrNode(String text, JsonNode node, String mediaType) {
+        if (text != null && looksLikeDownloadUrl(text, mediaType)) {
+            return text;
+        }
+        if (node != null && node.isObject()) {
+            String value = firstText(node, "url", "src", "href", "downloadUrl", "download_url",
+                    "fileUrl", "file_url", "mediaUrl", "media_url");
+            if (value != null && looksLikeDownloadUrl(value, mediaType)) {
                 return value;
             }
         }
         return null;
+    }
+
+    private static boolean looksLikeMediaField(String fieldName, String mediaType) {
+        if ("video".equals(mediaType) && fieldName.contains("video")) {
+            return true;
+        }
+        if (!"video".equals(mediaType)
+                && (fieldName.contains("image") || fieldName.contains("cover") || fieldName.contains("thumb"))) {
+            return true;
+        }
+        return fieldName.contains("media") || fieldName.contains("file") || fieldName.contains("download")
+                || fieldName.equals("url") || fieldName.equals("src");
+    }
+
+    private static boolean isHttpUrl(String value) {
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        return lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("//");
+    }
+
+    private static boolean looksLikeDownloadUrl(String value, String mediaType) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        if (!(lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("//"))) {
+            return false;
+        }
+        if ("video".equals(mediaType)) {
+            return lower.contains(".mp4") || lower.contains(".webm") || lower.contains(".mov")
+                    || lower.contains("video") || lower.contains("media");
+        }
+        return lower.contains(".png") || lower.contains(".jpg") || lower.contains(".jpeg")
+                || lower.contains(".webp") || lower.contains(".gif") || lower.contains("image")
+                || lower.contains("cover") || lower.contains("thumbnail");
+    }
+
+    private static boolean isTextResponse(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            return false;
+        }
+        String lower = contentType.toLowerCase();
+        return lower.startsWith("text/") || lower.contains("json") || lower.contains("xml");
+    }
+
+    private static String normalizeRemoteUrl(String remoteUrl) {
+        if (remoteUrl != null && remoteUrl.startsWith("//")) {
+            return "https:" + remoteUrl;
+        }
+        URI uri = URI.create(remoteUrl);
+        if (uri.getScheme() == null) {
+            throw new IllegalArgumentException("媒体地址不是完整 URL: " + remoteUrl);
+        }
+        return remoteUrl;
+    }
+
+    private static String fieldNames(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        Iterator<String> names = node.fieldNames();
+        while (names.hasNext()) {
+            if (!builder.isEmpty()) {
+                builder.append(',');
+            }
+            builder.append(names.next());
+        }
+        return builder.toString();
     }
 
     private static String truncate(String text) {

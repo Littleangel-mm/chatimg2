@@ -11,8 +11,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,26 +87,13 @@ public class InspirationService {
         if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
             return imageUrl;
         }
-        Path local = storageConfig.getBackupDir().resolve(normalizeLocalPath(imageUrl)).normalize();
-        if (Files.exists(local)) {
+        if (storageConfig.resolveReadableImageFile(imageUrl) != null) {
             return imageUrl;
         }
         if (sourceUrl != null && !sourceUrl.isBlank()) {
             return sourceUrl;
         }
         return imageUrl;
-    }
-
-    private static String normalizeLocalPath(String path) {
-        String normalized = path.replace('\\', '/');
-        if (normalized.startsWith("/img/")) {
-            normalized = normalized.substring("/img/".length());
-        } else if (normalized.startsWith("img/")) {
-            normalized = normalized.substring("img/".length());
-        } else if (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        return normalized;
     }
 
     public List<String> getCategories(String mediaType) {
