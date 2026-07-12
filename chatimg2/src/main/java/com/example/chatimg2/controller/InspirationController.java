@@ -48,7 +48,7 @@ public class InspirationController {
         return ApiResponse.success(inspirationService.meta());
     }
 
-    /** 用户端：灵感视频/媒体流（支持 Range，本地缺失时代理远程） */
+    /** 用户端：灵感视频/媒体流（支持 Range，本地缺失时跳转远程地址） */
     @GetMapping("/inspiration/media/{id}")
     public void media(
             @PathVariable Integer id,

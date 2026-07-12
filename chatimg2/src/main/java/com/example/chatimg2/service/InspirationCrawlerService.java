@@ -15,15 +15,20 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -50,18 +55,6 @@ public class InspirationCrawlerService {
 
     @Value("${app.inspiration.download-images:true}")
     private boolean downloadImages;
-
-    @Value("${app.inspiration.proxy.enabled:false}")
-    private boolean proxyEnabled;
-
-    @Value("${app.inspiration.proxy.type:SOCKS}")
-    private String proxyType;
-
-    @Value("${app.inspiration.proxy.host:}")
-    private String proxyHost;
-
-    @Value("${app.inspiration.proxy.port:0}")
-    private int proxyPort;
 
     private volatile OkHttpClient httpClient;
 
@@ -127,11 +120,8 @@ public class InspirationCrawlerService {
         int created = 0, updated = 0, downloaded = 0, failed = 0, page = 1;
         boolean hasMore = true;
 
-        log.info("Inspiration crawl start: mediaType={}, proxyEnabled={}, proxy={}:{}",
-                type, proxyEnabled, proxyHost, proxyPort);
-        if (!proxyEnabled) {
-            log.warn("代理未启用（INSPIRATION_PROXY_ENABLED=false）。若本机无法直连 img2.ai，请在 .env 开启代理并重启应用。");
-        }
+        log.info("Inspiration crawl start: mediaType={}", type);
+        logSystemProxyChoice();
         while (hasMore && page <= maxPages) {
             JsonNode data;
             try {
@@ -331,18 +321,180 @@ public class InspirationCrawlerService {
         }
         synchronized (this) {
             if (httpClient == null) {
+                System.setProperty("java.net.useSystemProxies", "true");
+                System.setProperty("java.net.preferIPv4Stack", "true");
+                Proxy effectiveProxy = resolveEffectiveProxy();
+                ProxySelector proxySelector = ProxySelector.getDefault();
                 OkHttpClient.Builder builder = new OkHttpClient.Builder()
                         .connectTimeout(30, TimeUnit.SECONDS)
                         .readTimeout(60, TimeUnit.SECONDS);
-                if (proxyEnabled && proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-                    Proxy.Type type = "HTTP".equalsIgnoreCase(proxyType) ? Proxy.Type.HTTP : Proxy.Type.SOCKS;
-                    builder.proxy(new Proxy(type, new InetSocketAddress(proxyHost, proxyPort)));
-                    log.info("Inspiration crawler using proxy {} {}:{}", type, proxyHost, proxyPort);
+                if (isProxy(effectiveProxy)) {
+                    builder.proxy(effectiveProxy);
+                } else if (proxySelector != null) {
+                    builder.proxySelector(proxySelector);
                 }
                 httpClient = builder.build();
             }
         }
         return httpClient;
+    }
+
+    private void logSystemProxyChoice() {
+        try {
+            String route = describeProxy(resolveEffectiveProxy());
+            log.info("Inspiration crawler system network route: {}", route);
+        } catch (Exception e) {
+            log.info("Inspiration crawler system network route check failed: {}", e.getMessage());
+        }
+    }
+
+    private Proxy resolveEffectiveProxy() {
+        Proxy systemProxy = resolveJavaSystemProxy().orElse(Proxy.NO_PROXY);
+        if (isProxy(systemProxy)) {
+            return systemProxy;
+        }
+        return resolveWindowsProxyFallback().orElse(Proxy.NO_PROXY);
+    }
+
+    private Optional<Proxy> resolveJavaSystemProxy() {
+        try {
+            ProxySelector selector = ProxySelector.getDefault();
+            HttpUrl parsed = HttpUrl.parse(sourceUrl);
+            if (selector == null || parsed == null) {
+                return Optional.empty();
+            }
+            URI uri = parsed.uri();
+            List<Proxy> proxies = selector.select(uri);
+            if (proxies == null) {
+                return Optional.empty();
+            }
+            return proxies.stream().filter(this::isProxy).findFirst();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private Optional<Proxy> resolveWindowsProxyFallback() {
+        if (!isWindows()) {
+            return Optional.empty();
+        }
+        String proxyServer = readWindowsInternetSetting("ProxyServer");
+        if (proxyServer == null || proxyServer.isBlank()) {
+            return Optional.empty();
+        }
+        return parseProxyServer(proxyServer);
+    }
+
+    private Optional<Proxy> parseProxyServer(String proxyServer) {
+        String raw = proxyServer == null ? "" : proxyServer.trim();
+        if (raw.isBlank()) {
+            return Optional.empty();
+        }
+        Proxy.Type type = Proxy.Type.HTTP;
+        String endpoint = raw;
+        if (raw.contains("=")) {
+            Map<String, String> parts = new LinkedHashMap<>();
+            for (String part : raw.split(";")) {
+                int equals = part.indexOf('=');
+                if (equals > 0 && equals < part.length() - 1) {
+                    parts.put(part.substring(0, equals).trim().toLowerCase(), part.substring(equals + 1).trim());
+                }
+            }
+            endpoint = firstNonBlank(parts.get("https"), parts.get("http"), parts.get("socks"));
+            if (endpoint != null && endpoint.equals(parts.get("socks"))) {
+                type = Proxy.Type.SOCKS;
+            }
+        }
+        return proxyFromEndpoint(endpoint, type);
+    }
+
+    private Optional<Proxy> proxyFromEndpoint(String endpoint, Proxy.Type type) {
+        if (endpoint == null || endpoint.isBlank()) {
+            return Optional.empty();
+        }
+        String value = endpoint.trim();
+        if (value.startsWith("http://")) {
+            value = value.substring("http://".length());
+            type = Proxy.Type.HTTP;
+        } else if (value.startsWith("https://")) {
+            value = value.substring("https://".length());
+            type = Proxy.Type.HTTP;
+        } else if (value.startsWith("socks://")) {
+            value = value.substring("socks://".length());
+            type = Proxy.Type.SOCKS;
+        }
+        int slash = value.indexOf('/');
+        if (slash >= 0) {
+            value = value.substring(0, slash);
+        }
+        int colon = value.lastIndexOf(':');
+        if (colon <= 0 || colon >= value.length() - 1) {
+            return Optional.empty();
+        }
+        String host = value.substring(0, colon).trim();
+        try {
+            int port = Integer.parseInt(value.substring(colon + 1).trim());
+            if (host.isBlank() || port <= 0 || port > 65535) {
+                return Optional.empty();
+            }
+            return Optional.of(new Proxy(type, InetSocketAddress.createUnresolved(host, port)));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    private String readWindowsInternetSetting(String name) {
+        try {
+            Process process = new ProcessBuilder("reg", "query",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                    "/v", name)
+                    .redirectErrorStream(true)
+                    .start();
+            byte[] output = process.getInputStream().readAllBytes();
+            if (!process.waitFor(3, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                return null;
+            }
+            String text = new String(output, Charset.defaultCharset());
+            for (String line : text.split("\\R")) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith(name)) {
+                    String[] columns = trimmed.split("\\s+", 3);
+                    if (columns.length == 3) {
+                        return columns[2].trim();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private boolean isProxy(Proxy proxy) {
+        return proxy != null && proxy != Proxy.NO_PROXY && proxy.type() != Proxy.Type.DIRECT;
+    }
+
+    private String describeProxy(Proxy proxy) {
+        if (!isProxy(proxy)) {
+            return "DIRECT";
+        }
+        SocketAddress address = proxy.address();
+        if (address instanceof InetSocketAddress inet) {
+            return proxy.type() + " " + inet.getHostString() + ":" + inet.getPort();
+        }
+        return proxy.type().toString();
     }
 
     private static String extractExtension(String url, String mediaType) {

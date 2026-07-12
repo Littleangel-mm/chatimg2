@@ -24,6 +24,8 @@ img/*
 !img/
 !img/upimg/
 !img/upvideo/
+img/upimg/*
+img/upvideo/*
 !img/upimg/.gitkeep
 !img/upvideo/.gitkeep
 

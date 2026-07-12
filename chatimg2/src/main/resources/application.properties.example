@@ -61,11 +61,6 @@ app.inspiration.max-pages=${INSPIRATION_MAX_PAGES:100}
 # 每个媒体旁边会生成同名 .json 保存提示词和来源信息
 # false 表示前端直接使用远程媒体 URL
 app.inspiration.download-images=${INSPIRATION_DOWNLOAD_IMAGES:true}
-# 爬取代理（本机无法直连 img2.ai 时开启），type 可选 SOCKS / HTTP
-app.inspiration.proxy.enabled=${INSPIRATION_PROXY_ENABLED:false}
-app.inspiration.proxy.type=${INSPIRATION_PROXY_TYPE:SOCKS}
-app.inspiration.proxy.host=${INSPIRATION_PROXY_HOST:}
-app.inspiration.proxy.port=${INSPIRATION_PROXY_PORT:0}
 # 定时自动爬取（默认每天凌晨 00:00，cron 为 6 段式 秒 分 时 日 月 周）
 app.inspiration.schedule.enabled=${INSPIRATION_SCHEDULE_ENABLED:true}
 app.inspiration.schedule.cron=${INSPIRATION_SCHEDULE_CRON:0 0 0 * * *}
