@@ -31,10 +31,11 @@ export const IMAGE_BASE_PATH = '/img/'
 
 export function normalizeImageUrl(path) {
   if (!path) return ''
-  if (path.startsWith('data:')) return path
-  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  const raw = String(path).trim()
+  if (raw.startsWith('data:')) return raw
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw
 
-  let normalized = String(path).replaceAll('\\', '/')
+  let normalized = raw.replaceAll('\\', '/')
   const imgIndex = normalized.lastIndexOf('/img/')
   if (imgIndex >= 0) {
     normalized = normalized.slice(imgIndex + '/img/'.length)

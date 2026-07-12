@@ -437,7 +437,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!record?.sourceImagePath) return false
     const userMsg = previousUserMessage(conv, assistantMsg)
     if (!userMsg) return false
-    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
+    if (userMsg.sourceImage) return false
     userMsg.sourceImage = record.sourceImagePath
     return true
   }
