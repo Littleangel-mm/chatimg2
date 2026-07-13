@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -26,6 +27,10 @@ public class ImageApiClient {
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String CONTENT_POLICY_ADVICE_PREFIX = "CONTENT_POLICY_ADVICE:";
+    private static final String AUTO_IMAGE_SIZE = "auto";
+    private static final String DEFAULT_IMAGE_SIZE = "1024x1024";
+    private static final String PORTRAIT_IMAGE_SIZE = "1024x1536";
+    private static final String LANDSCAPE_IMAGE_SIZE = "1536x1024";
 
     @Value("${app.api.key}")
     private String apiKey;
@@ -35,6 +40,9 @@ public class ImageApiClient {
 
     @Value("${app.api.model.text2img:gpt-image-2}")
     private String defaultText2imgModel;
+
+    @Value("${app.api.image.size:auto}")
+    private String configuredImageSize;
 
     @Value("${app.api.poll.initial-delay-ms:5000}")
     private long pollInitialDelayMs;
@@ -97,12 +105,17 @@ public class ImageApiClient {
         List<String> models = buildText2imgModels(requestedModel, fallbacks);
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
-            try {
+            List<String> sizes = buildSizeAttempts(resolveImageSizeFromPrompt(prompt));
+            for (int sizeIndex = 0; sizeIndex < sizes.size(); sizeIndex++) {
+                String size = sizes.get(sizeIndex);
+                try {
                 var body = new java.util.HashMap<String, Object>();
                 body.put("model", model);
                 body.put("prompt", prompt);
                 body.put("n", 1);
-                body.put("size", "1024x1024");
+                if (size != null && !size.isBlank()) {
+                    body.put("size", size);
+                }
                 String jsonBody = objectMapper.writeValueAsString(body);
                 Request request = new Request.Builder()
                         .url(getApiBaseUrl() + "/v1/images/generations")
@@ -111,22 +124,29 @@ public class ImageApiClient {
                         .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
                         .build();
 
-                log.info("Text2img trying model: {}", model);
+                log.info("Text2img trying model: {}, size={}", model, size == null ? "omitted" : size);
                 return resolveImageFromSubmit(request);
-            } catch (RuntimeException e) {
-                lastError = e;
-                boolean hasNext = i < models.size() - 1;
-                if (isModelNotFound(e) && hasNext) {
-                    log.warn("Model {} not available, trying next...", model);
-                    continue;
+                } catch (RuntimeException e) {
+                    lastError = e;
+                    boolean hasNextSize = sizeIndex < sizes.size() - 1;
+                    if (hasNextSize && shouldRetryText2imgWithNextSize(e)) {
+                        log.warn("Text2img size {} failed, trying next size option: {}",
+                                size == null ? "omitted" : size, e.getMessage());
+                        continue;
+                    }
+                    boolean hasNext = i < models.size() - 1;
+                    if (isModelNotFound(e) && hasNext) {
+                        log.warn("Model {} not available, trying next...", model);
+                        break;
+                    }
+                    if (isTimeoutError(e) && hasNext) {
+                        log.warn("Model {} timed out, trying next...", model);
+                        break;
+                    }
+                    throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
+                } catch (Exception e) {
+                    throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
                 }
-                if (isTimeoutError(e) && hasNext) {
-                    log.warn("Model {} timed out, trying next...", model);
-                    continue;
-                }
-                throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
-            } catch (Exception e) {
-                throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
             }
         }
         throw new RuntimeException(
@@ -169,6 +189,7 @@ public class ImageApiClient {
         try {
             String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
             String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
+            String size = resolveImageSizeFromPrompt(prompt);
             RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
             MultipartBody body = new MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
@@ -176,7 +197,7 @@ public class ImageApiClient {
                     .addFormDataPart("prompt", prompt)
                     .addFormDataPart("model", model)
                     .addFormDataPart("n", "1")
-                    .addFormDataPart("size", "1024x1024")
+                    .addFormDataPart("size", size)
                     .build();
 
             Request request = new Request.Builder()
@@ -185,7 +206,7 @@ public class ImageApiClient {
                     .post(body)
                     .build();
 
-            log.info("Img2img using model: {}, mediaType={}", model, mediaType);
+            log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
             return resolveImageFromSubmit(request);
         } catch (RuntimeException e) {
             throw e;
@@ -223,6 +244,67 @@ public class ImageApiClient {
 
     private boolean isGptImageModel(String model) {
         return model != null && model.trim().startsWith("gpt-image");
+    }
+
+    private String resolveImageSizeFromPrompt(String prompt) {
+        String text = normalizePrompt(prompt);
+        if (containsAny(text, "9:16", "9/16", "916", "1080x1920", "720x1280", "竖屏", "竖版", "竖图", "手机壁纸", "portrait", "vertical")) {
+            return PORTRAIT_IMAGE_SIZE;
+        }
+        if (containsAny(text, "16:9", "16/9", "169", "1920x1080", "1280x720", "横屏", "横版", "横图", "landscape", "horizontal", "wide")) {
+            return LANDSCAPE_IMAGE_SIZE;
+        }
+        if (containsAny(text, "1:1", "1/1", "方图", "方形", "square")) {
+            return DEFAULT_IMAGE_SIZE;
+        }
+        return DEFAULT_IMAGE_SIZE;
+    }
+
+    private List<String> buildSizeAttempts(String preferredSize) {
+        LinkedHashSet<String> sizes = new LinkedHashSet<>();
+        if (preferredSize != null && !preferredSize.isBlank()) {
+            sizes.add(preferredSize.trim());
+        }
+        if (configuredImageSize != null && !configuredImageSize.isBlank()) {
+            sizes.add(configuredImageSize.trim());
+        }
+        sizes.add(AUTO_IMAGE_SIZE);
+        sizes.add(null);
+        sizes.add(DEFAULT_IMAGE_SIZE);
+        return new ArrayList<>(sizes);
+    }
+
+    private boolean shouldRetryText2imgWithNextSize(RuntimeException error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return true;
+        }
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("size")
+                || normalized.contains("invalid")
+                || normalized.contains("bad_request")
+                || normalized.contains("bad response")
+                || normalized.contains("502")
+                || normalized.contains("503")
+                || isServerApiError(error)
+                || isTimeoutError(error);
+    }
+
+    private String normalizePrompt(String prompt) {
+        return (prompt == null ? "" : prompt)
+                .toLowerCase(Locale.ROOT)
+                .replace('\uff1a', ':')
+                .replace('\u00d7', 'x')
+                .replace('*', 'x');
+    }
+
+    private boolean containsAny(String text, String... values) {
+        for (String value : values) {
+            if (text.contains(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String resolveImageFromSubmit(Request request) throws IOException {

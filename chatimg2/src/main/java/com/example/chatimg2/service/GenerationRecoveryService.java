@@ -22,7 +22,7 @@ public class GenerationRecoveryService {
     private final GenerationRecordService recordService;
     private final GenerationRecordRepository recordRepository;
 
-    @Value("${app.generation.recovery.enabled:true}")
+    @Value("${app.generation.recovery.enabled:false}")
     private boolean enabled;
 
     @Value("${app.generation.recovery.stale-after-ms:900000}")

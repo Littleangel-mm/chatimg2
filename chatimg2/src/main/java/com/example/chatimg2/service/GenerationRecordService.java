@@ -101,6 +101,12 @@ public class GenerationRecordService {
             com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
                 com.example.chatimg2.entity.GenerationRecord record = recordRepository.findById(recordId)
                         .orElseThrow(() -> new RuntimeException("记录不存在"));
+                if ("completed".equals(record.getStatus())) {
+                    return record;
+                }
+                if ("failed".equals(record.getStatus())) {
+                    rechargeRefundedCredits(record);
+                }
                 record.setImagePath(imagePath);
                 record.setLocalPath(null);
                 record.setStatus("completed");
@@ -119,11 +125,14 @@ public class GenerationRecordService {
             runDbOperationWithRetry(() -> {
                 transactionTemplate.executeWithoutResult(status -> {
                     recordRepository.findById(recordId).ifPresent(record -> {
+                        if ("completed".equals(record.getStatus()) || "failed".equals(record.getStatus())) {
+                            return;
+                        }
                         record.setStatus("failed");
                         record.setErrorMessage(truncateError(errorMessage));
                         recordRepository.save(record);
+                        keyService.refundCredits(record.getKeyId() != null ? record.getKeyId() : keyId, resolveCreditCost(record));
                     });
-                    keyService.refundCredits(keyId, CREDITS_PER_GENERATION);
                 });
                 return null;
             });
@@ -137,14 +146,13 @@ public class GenerationRecordService {
             runDbOperationWithRetry(() -> {
                 transactionTemplate.executeWithoutResult(status -> {
                     recordRepository.findById(recordId).ifPresent(record -> {
+                        if ("completed".equals(record.getStatus()) || "failed".equals(record.getStatus())) {
+                            return;
+                        }
                         record.setStatus("failed");
                         record.setErrorMessage(truncateError(errorMessage));
                         recordRepository.save(record);
-                    });
-                    userRepository.findById(userId).ifPresent(user -> {
-                        user.setUsedCredits(Math.max(0, user.getUsedCredits() - CREDITS_PER_GENERATION));
-                        userRepository.save(user);
-                        keyService.syncUserUsageToBoundKeys(user);
+                        refundUserCredits(record.getUserId() != null ? record.getUserId() : userId, resolveCreditCost(record));
                     });
                 });
                 return null;
@@ -152,6 +160,35 @@ public class GenerationRecordService {
         } catch (RuntimeException e) {
             log.error("Failed to mark record {} as failed and refund user {}", recordId, userId, e);
         }
+    }
+
+    private void rechargeRefundedCredits(com.example.chatimg2.entity.GenerationRecord record) {
+        int cost = resolveCreditCost(record);
+        if (record.getUserId() != null) {
+            userRepository.findById(record.getUserId()).ifPresent(user -> {
+                user.setUsedCredits(user.getUsedCredits() + cost);
+                userRepository.save(user);
+                keyService.syncUserUsageToBoundKeys(user);
+            });
+            return;
+        }
+        if (record.getKeyId() != null && !keyService.deductCredits(record.getKeyId(), cost)) {
+            throw new RuntimeException("积分补扣失败");
+        }
+    }
+
+    private void refundUserCredits(Integer userId, int cost) {
+        userRepository.findById(userId).ifPresent(user -> {
+            user.setUsedCredits(Math.max(0, user.getUsedCredits() - cost));
+            userRepository.save(user);
+            keyService.syncUserUsageToBoundKeys(user);
+        });
+    }
+
+    private int resolveCreditCost(com.example.chatimg2.entity.GenerationRecord record) {
+        return record.getCreditsCost() != null && record.getCreditsCost() > 0
+                ? record.getCreditsCost()
+                : CREDITS_PER_GENERATION;
     }
 
     private <T> T runDbOperationWithRetry(Callable<T> action) {

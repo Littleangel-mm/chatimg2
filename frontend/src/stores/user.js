@@ -11,6 +11,7 @@ const RECOVERY_INTERVAL_MS = 5000
 const RECOVERY_MAX_ATTEMPTS = 36
 const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
 const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
+const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
 const activePolls = new Set()
 
 function normalizeStatus(status) {
@@ -20,8 +21,14 @@ function normalizeStatus(status) {
 function resolveRecordStatus(record) {
   const status = normalizeStatus(record?.status)
   if (record?.imagePath) return 'completed'
+  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
   if (status === 'completed' || status === 'failed') return status
   return status || 'processing'
+}
+
+function isRecoveryInterruptedRecord(record) {
+  const message = record?.errorMessage || ''
+  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
 }
 
 function friendlyGenerationError(message, record = null) {
@@ -399,6 +406,8 @@ export const useUserStore = defineStore('user', () => {
       if (data.code !== 200) throw new Error(data.message)
 
       upsertHistoryRecord(data.data)
+      applyLocalGenerationCharge(data.data)
+      generating.value = false
       await syncCreditsFromServer()
 
       if (resolveRecordStatus(data.data) === 'processing') {
@@ -417,6 +426,27 @@ export const useUserStore = defineStore('user', () => {
     } finally {
       generating.value = false
     }
+  }
+
+  function applyLocalGenerationCharge(record) {
+    const cost = Number(record?.creditsCost || 20)
+    if (!Number.isFinite(cost) || cost <= 0 || resolveRecordStatus(record) !== 'processing') {
+      return
+    }
+    const authStore = useAuthStore()
+    if (authStore.isUser && authStore.user) {
+      const used = Number(authStore.user.usedCredits || 0) + cost
+      const total = Number(authStore.user.totalCredits || 0)
+      authStore.user = {
+        ...authStore.user,
+        usedCredits: used,
+        remainingCredits: Math.max(0, total - used)
+      }
+      localStorage.setItem('authUser', JSON.stringify(authStore.user))
+      return
+    }
+    usedCredits.value += cost
+    persist()
   }
 
   function logout() {

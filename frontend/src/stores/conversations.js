@@ -6,6 +6,7 @@ import { getImageUrl } from '../api'
 const STORAGE_PREFIX = 'conversations_'
 const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
 const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
+const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
 
 function storageKey(keyCode) {
   return `${STORAGE_PREFIX}${keyCode || 'guest'}`
@@ -34,8 +35,14 @@ function recordIdEquals(a, b) {
 function resolveRecordStatus(record) {
   const status = (record?.status || '').toLowerCase()
   if (record?.imagePath) return 'completed'
+  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
   if (status === 'completed' || status === 'failed') return status
   return status || 'processing'
+}
+
+function isRecoveryInterruptedRecord(record) {
+  const message = record?.errorMessage || ''
+  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
 }
 
 function recordForMessage(record, status, errorMessage) {
@@ -193,6 +200,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       return false
     }
 
+    const preferredActiveId = activeId.value
     let filteredDeleted = false
     conversations.value = remoteConversations
       .filter(conv => {
@@ -219,9 +227,11 @@ export const useConversationsStore = defineStore('conversations', () => {
         createdAt: msg.createdAt || Date.now()
       }))
     }))
-    activeId.value = conversations.value.some(conv => conv.id === payload.activeId)
-      ? payload.activeId
-      : conversations.value[0]?.id || null
+    activeId.value = conversations.value.some(conv => conv.id === preferredActiveId)
+      ? preferredActiveId
+      : conversations.value.some(conv => conv.id === payload.activeId)
+        ? payload.activeId
+        : conversations.value[0]?.id || null
     writeStored(boundKeyCode.value, {
       conversations: conversations.value,
       activeId: activeId.value,
