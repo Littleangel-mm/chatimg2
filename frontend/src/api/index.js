@@ -28,8 +28,8 @@ generateApi.interceptors.request.use(attachAuth)
 
 /** 灵感画廊媒体仍走静态资源，视频播放可以继续使用浏览器 Range 请求 */
 export const IMAGE_BASE_PATH = '/img/'
-/** 聊天生成图和参考图走后端接口，线上只需要反代 /api */
-export const API_IMAGE_BASE_PATH = '/api/images/'
+/** 聊天生成图、参考图和灵感画廊统一走 /img/ 静态资源 */
+export const API_IMAGE_BASE_PATH = '/img/'
 
 export function normalizeImageUrl(path, basePath = API_IMAGE_BASE_PATH) {
   if (!path) return ''
