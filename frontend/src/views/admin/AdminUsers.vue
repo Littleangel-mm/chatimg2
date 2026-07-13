@@ -178,4 +178,41 @@ th { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
 .btn-sm.danger { color: var(--danger); }
 .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 .empty { text-align: center; color: var(--text-muted); padding: 40px !important; }
+
+@media (max-width: 768px) {
+  .admin-page {
+    padding: 24px 0 48px;
+  }
+
+  .page-header {
+    margin-bottom: 20px;
+  }
+
+  .page-header h1 {
+    font-size: 24px;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .header-actions > * {
+    flex: 1 1 96px;
+    text-align: center;
+  }
+
+  .table-wrap {
+    margin: 0 -10px;
+    border-radius: 0;
+  }
+
+  table {
+    min-width: 920px;
+  }
+
+  th,
+  td {
+    padding: 12px 10px;
+  }
+}
 </style>

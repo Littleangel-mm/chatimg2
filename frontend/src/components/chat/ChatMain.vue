@@ -39,7 +39,7 @@ const avatarText = computed(() => {
 
 const showAccountMenu = ref(false)
 const showContactMenu = ref(false)
-const adminContactImage = 'img/admin/wechat--admin.jpg'
+const adminContactImage = '/img/admin/wechat--admin.jpg'
 
 const accountInfo = computed(() => ({
   email: authStore.user?.email || '未登录',
@@ -173,6 +173,7 @@ function clearSource() {
 }
 
 function switchChatType(type) {
+  const draft = prompt.value
   let conv = conversation()
   if (!conv) {
     conv = convStore.createConversation(type)
@@ -894,5 +895,104 @@ onActivated(applyPendingPrompt)
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+  .chat-header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .header-title {
+    gap: 6px;
+  }
+
+  .header-title h1 {
+    font-size: 17px;
+  }
+
+  .type-badge {
+    display: none;
+  }
+
+  .avatar-wrap {
+    gap: 6px;
+  }
+
+  .notice-btn {
+    width: 36px;
+    padding: 0;
+    font-size: 0;
+    border-radius: 50%;
+  }
+
+  .notice-btn::before {
+    content: '?';
+    font-size: 15px;
+  }
+
+  .account-popover {
+    position: fixed;
+    top: 58px;
+    right: 10px;
+    left: 10px;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .contact-overlay {
+    padding: 16px;
+  }
+
+  .messages {
+    padding: 6px 12px 18px;
+  }
+
+  .welcome {
+    padding: 28px 18px;
+  }
+
+  .welcome-inner h2 {
+    font-size: 30px;
+    line-height: 1.2;
+  }
+
+  .input-area {
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .input-card {
+    border-radius: 16px;
+    padding: 10px;
+  }
+
+  .mode-switch {
+    display: flex;
+    width: 100%;
+  }
+
+  .mode-switch button {
+    flex: 1;
+  }
+
+  .input-row {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .prompt {
+    flex-basis: 100%;
+    min-height: 46px;
+  }
+
+  .model-select {
+    flex: 1;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .send-btn {
+    min-width: 88px;
+  }
 }
 </style>

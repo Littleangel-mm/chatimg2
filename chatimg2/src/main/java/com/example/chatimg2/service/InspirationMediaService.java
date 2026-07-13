@@ -47,7 +47,7 @@ public class InspirationMediaService {
     public String resolveVideoDisplayUrl(InspirationPrompt prompt) {
         Path local = resolveLocalFile(prompt);
         if (local != null && Files.isRegularFile(local)) {
-            return mediaApiPath(prompt.getId());
+            return storageConfig.toPublicUrl(local);
         }
         String remote = resolveRemoteUrl(prompt);
         if (remote != null && !remote.isBlank()) {

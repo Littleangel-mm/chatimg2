@@ -55,6 +55,7 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 html, body, #app {
@@ -69,6 +70,7 @@ html, body, #app {
 }
 
 body {
+  overflow-x: hidden;
   background-image:
     radial-gradient(ellipse 70% 50% at 12% 0%, rgba(242, 184, 198, 0.22), transparent 60%),
     radial-gradient(ellipse 60% 45% at 95% 8%, rgba(216, 180, 120, 0.16), transparent 55%);
@@ -97,6 +99,12 @@ button {
 input, textarea, select {
   font-family: inherit;
   color: var(--text);
+  min-width: 0;
+}
+
+img,
+video {
+  max-width: 100%;
 }
 
 ::selection {
@@ -128,6 +136,7 @@ input, textarea, select {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 24px;
+  width: 100%;
 }
 
 .btn-primary {
@@ -209,4 +218,30 @@ input, textarea, select {
 button.tap:active,
 a.tap:active {
   transform: scale(0.97);
+}
+
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: min(84vw, 300px);
+    --radius-lg: 16px;
+  }
+
+  .container {
+    padding: 0 14px;
+  }
+
+  .btn-primary,
+  .btn-ghost {
+    min-height: 40px;
+  }
+
+  .card {
+    border-radius: 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .container {
+    padding: 0 10px;
+  }
 }

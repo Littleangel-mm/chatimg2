@@ -133,4 +133,19 @@ async function submit() {
   width: 100%;
   padding: 14px;
 }
+
+@media (max-width: 520px) {
+  .overlay {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .modal {
+    padding: 24px 18px;
+  }
+
+  .modal-header h2 {
+    font-size: 24px;
+  }
+}
 </style>

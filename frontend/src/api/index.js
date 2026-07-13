@@ -73,6 +73,14 @@ function encodePathPart(part) {
   }
 }
 
+function isRemoteUrl(path) {
+  return path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')
+}
+
+function isApiMediaPath(path) {
+  return path.startsWith('/api/inspiration/media/') || path.startsWith('api/inspiration/media/')
+}
+
 export default api
 export { generateApi }
 
@@ -93,9 +101,10 @@ export function getInspirationImageUrl(item) {
   if (!item) return ''
   const path = item.imageUrl || item.sourceUrl || ''
   if (!path) return ''
-  let url = path
-  if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/')) {
-    url = normalizeImageUrl(path, IMAGE_BASE_PATH)
+  const raw = String(path).trim()
+  let url = raw
+  if (!isRemoteUrl(raw) && !isApiMediaPath(raw)) {
+    url = normalizeImageUrl(raw, IMAGE_BASE_PATH)
   }
   return appendCacheBust(url, item.updatedAt)
 }

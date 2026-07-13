@@ -617,15 +617,47 @@ function goHome() {
     gap: 12px;
     padding: 12px 16px;
   }
+  .insp-heading {
+    flex: 1;
+    min-width: 0;
+  }
+  .insp-heading h1 {
+    font-size: 24px;
+  }
   .insp-tabs {
     margin-left: 0;
+    width: 100%;
+  }
+  .insp-tab {
+    flex: 1;
+    padding: 8px 12px;
   }
   .insp-inner {
-    padding: 16px;
+    padding: 12px;
   }
   .insp-grid {
     columns: 2 140px;
     column-gap: 10px;
+  }
+  .insp-card {
+    margin-bottom: 10px;
+  }
+  .insp-card-overlay {
+    position: static;
+    opacity: 1;
+    background: var(--bg-elevated);
+    padding: 10px;
+  }
+  .insp-card-prompt {
+    color: var(--text);
+    -webkit-line-clamp: 2;
+  }
+  .insp-card-btn {
+    width: 100%;
+  }
+  .insp-detail-overlay {
+    align-items: flex-end;
+    padding: 10px;
   }
   .insp-detail {
     flex-direction: column;
@@ -634,6 +666,24 @@ function goHome() {
   .insp-detail-img {
     width: 100%;
     max-height: 38vh;
+  }
+  .insp-detail-info {
+    padding: 18px;
+  }
+  .insp-detail-actions {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .insp-topbar {
+    padding: 10px;
+  }
+  .back-btn {
+    padding: 8px 12px;
+  }
+  .insp-grid {
+    columns: 1 100%;
   }
 }
 </style>

@@ -12,6 +12,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.time.ZoneOffset;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,8 +88,9 @@ public class InspirationService {
         if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
             return imageUrl;
         }
-        if (storageConfig.resolveReadableImageFile(imageUrl) != null) {
-            return imageUrl;
+        Path local = storageConfig.resolveReadableImageFile(imageUrl);
+        if (local != null) {
+            return storageConfig.toPublicUrl(local);
         }
         if (sourceUrl != null && !sourceUrl.isBlank()) {
             return sourceUrl;
