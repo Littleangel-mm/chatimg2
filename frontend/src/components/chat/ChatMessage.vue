@@ -13,15 +13,17 @@ const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
+const messageStatus = computed(() => {
+  if (props.message.record?.imagePath) return 'completed'
+  return (props.message.record?.status || props.message.status || '').toLowerCase()
+})
 const isProcessing = computed(() => {
-  const status = (props.message.record?.status || props.message.status || '').toLowerCase()
+  const status = messageStatus.value
   if (status === 'completed' || status === 'failed') return false
-  if (props.message.record?.imagePath) return false
   return status === 'processing' || !status
 })
 const isFailed = computed(() => {
-  const status = (props.message.record?.status || props.message.status || '').toLowerCase()
-  return status === 'failed'
+  return messageStatus.value === 'failed'
 })
 const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)

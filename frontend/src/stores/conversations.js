@@ -33,9 +33,28 @@ function recordIdEquals(a, b) {
 
 function resolveRecordStatus(record) {
   const status = (record?.status || '').toLowerCase()
-  if (status === 'completed' || status === 'failed') return status
   if (record?.imagePath) return 'completed'
+  if (status === 'completed' || status === 'failed') return status
   return status || 'processing'
+}
+
+function recordForMessage(record, status, errorMessage) {
+  return {
+    ...record,
+    status,
+    errorMessage: status === 'completed' ? null : errorMessage
+  }
+}
+
+function messageStatusForSync(msg) {
+  if (msg?.role !== 'assistant') return null
+  return resolveRecordStatus(msg.record || { status: msg.status })
+}
+
+function messageErrorForSync(msg) {
+  const status = messageStatusForSync(msg)
+  if (status === 'completed') return null
+  return msg.errorMessage || msg.record?.errorMessage || null
 }
 
 function friendlyGenerationError(message, record = null) {
@@ -160,8 +179,8 @@ export const useConversationsStore = defineStore('conversations', () => {
           content: msg.content || '',
           sourceImage: msg.sourceImage && !msg.sourceImage.startsWith('data:') ? msg.sourceImage : null,
           recordId: msg.recordId || msg.record?.id || null,
-          status: msg.status || msg.record?.status || null,
-          errorMessage: msg.errorMessage || msg.record?.errorMessage || null,
+          status: messageStatusForSync(msg),
+          errorMessage: messageErrorForSync(msg),
           createdAt: msg.createdAt
         }))
       }))
@@ -376,10 +395,12 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (msg.role !== 'assistant') continue
         if (recordIdEquals(msg.recordId, record.id) || recordIdEquals(msg.record?.id, record.id)) {
           const nextStatus = resolveRecordStatus(record)
-          const nextErrorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
+          const nextErrorMessage = nextStatus === 'completed'
+            ? null
+            : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
           if (recordChangedForMessage(msg, record, nextStatus, nextErrorMessage)) {
             msg.recordId = record.id
-            msg.record = { ...record }
+            msg.record = recordForMessage(record, nextStatus, nextErrorMessage)
             msg.status = nextStatus
             msg.errorMessage = nextErrorMessage
             if (attachSourceImagePath(conv, msg, record)) {
@@ -395,9 +416,11 @@ export const useConversationsStore = defineStore('conversations', () => {
         const pending = findPendingAssistantForRecord(conv, record)
         if (pending) {
           pending.recordId = record.id
-          pending.record = { ...record }
           pending.status = resolveRecordStatus(record)
-          pending.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
+          pending.errorMessage = pending.status === 'completed'
+            ? null
+            : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
+          pending.record = recordForMessage(record, pending.status, pending.errorMessage)
           attachSourceImagePath(conv, pending, record)
           changed = true
         }
@@ -437,7 +460,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!record?.sourceImagePath) return false
     const userMsg = previousUserMessage(conv, assistantMsg)
     if (!userMsg) return false
-    if (userMsg.sourceImage) return false
+    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
     userMsg.sourceImage = record.sourceImagePath
     return true
   }
@@ -458,9 +481,11 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!msg) return false
 
     msg.recordId = record.id
-    msg.record = { ...record }
     msg.status = resolveRecordStatus(record)
-    msg.errorMessage = record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null
+    msg.errorMessage = msg.status === 'completed'
+      ? null
+      : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
+    msg.record = recordForMessage(record, msg.status, msg.errorMessage)
     attachSourceImagePath(conv, msg, record)
     persist()
     return true
@@ -473,6 +498,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
         if (!recordIdEquals(msg.recordId, recordId) && !recordIdEquals(msg.record?.id, recordId)) continue
+        if (resolveRecordStatus(msg.record || { status: msg.status }) === 'completed') continue
         msg.status = 'failed'
         msg.errorMessage = errorMessage || '生成失败'
         changed = true
@@ -502,9 +528,11 @@ export const useConversationsStore = defineStore('conversations', () => {
         const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
         if (nextStatus !== prevStatus || imageChanged || sourceMissing) {
           msg.recordId = latest.id
-          msg.record = { ...latest }
           msg.status = nextStatus
-          msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
+          msg.errorMessage = nextStatus === 'completed'
+            ? null
+            : (latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null)
+          msg.record = recordForMessage(latest, nextStatus, msg.errorMessage)
           attachSourceImagePath(conv, msg, latest)
           changed = true
         }
@@ -539,9 +567,11 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (!latest) continue
 
         msg.recordId = latest.id
-        msg.record = { ...latest }
         msg.status = resolveRecordStatus(latest)
-        msg.errorMessage = latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null
+        msg.errorMessage = msg.status === 'completed'
+          ? null
+          : (latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null)
+        msg.record = recordForMessage(latest, msg.status, msg.errorMessage)
         attachSourceImagePath(conv, msg, latest)
         usedIds.add(Number(latest.id))
         changed = true
@@ -577,13 +607,17 @@ export const useConversationsStore = defineStore('conversations', () => {
         sourceImage: null,
         createdAt: new Date(record.createdAt || Date.now()).getTime()
       }
+      const status = resolveRecordStatus(record)
+      const errorMessage = status === 'completed'
+        ? null
+        : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
       const assistantMsg = {
         id: uid(),
         role: 'assistant',
         recordId: record.id,
-        record: { ...record },
-        status: resolveRecordStatus(record),
-        errorMessage: record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null,
+        record: recordForMessage(record, status, errorMessage),
+        status,
+        errorMessage,
         createdAt: new Date(record.createdAt || Date.now()).getTime() + 1
       }
       return {

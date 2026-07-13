@@ -8,11 +8,14 @@ import org.springframework.boot.system.ApplicationHome;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 @Slf4j
 @Component
@@ -164,12 +167,40 @@ public class ImageStorageConfig {
                 return file;
             }
         }
+        if (!normalized.contains("/")) {
+            for (Path dir : readableImageDirs) {
+                Path file = findReadableFileByName(dir, normalized);
+                if (file != null) {
+                    return file;
+                }
+            }
+        }
         return null;
     }
 
+    private Path findReadableFileByName(Path dir, String fileName) {
+        Path root = dir.toAbsolutePath().normalize();
+        if (!Files.isDirectory(root)) {
+            return null;
+        }
+        try (Stream<Path> stream = Files.find(root, 4,
+                (path, attrs) -> attrs.isRegularFile()
+                        && path.getFileName() != null
+                        && fileName.equals(path.getFileName().toString()))) {
+            return stream.findFirst().orElse(null);
+        } catch (IOException e) {
+            log.debug("Image fallback lookup failed in {}: {}", root, e.getMessage());
+            return null;
+        }
+    }
+
     public static String normalizeRelativeImagePath(String path) {
-        String normalized = path == null ? "" : path.replace('\\', '/');
-        if (normalized.startsWith("/img/")) {
+        String normalized = path == null ? "" : URLDecoder.decode(path, StandardCharsets.UTF_8).replace('\\', '/');
+        if (normalized.startsWith("/api/images/")) {
+            normalized = normalized.substring("/api/images/".length());
+        } else if (normalized.startsWith("api/images/")) {
+            normalized = normalized.substring("api/images/".length());
+        } else if (normalized.startsWith("/img/")) {
             normalized = normalized.substring("/img/".length());
         } else if (normalized.startsWith("img/")) {
             normalized = normalized.substring("img/".length());
@@ -184,6 +215,13 @@ public class ImageStorageConfig {
     }
 
     public String toPublicUrl(Path file) {
+        Path normalized = file.toAbsolutePath().normalize();
+        for (Path dir : readableImageDirs) {
+            Path root = dir.toAbsolutePath().normalize();
+            if (normalized.startsWith(root)) {
+                return "/img/" + root.relativize(normalized).toString().replace('\\', '/');
+            }
+        }
         return "/img/" + file.getFileName();
     }
 }

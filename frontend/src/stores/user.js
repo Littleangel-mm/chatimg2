@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '../api'
+import api, { generateApi } from '../api'
 import { useConversationsStore } from './conversations'
 import { useAuthStore } from './auth'
 
 const CACHE_KEY = 'userCache'
 const POLL_INTERVAL_MS = 4000
-const POLL_MAX_ATTEMPTS = 180
+const POLL_MAX_ATTEMPTS = 900
+const RECOVERY_INTERVAL_MS = 5000
+const RECOVERY_MAX_ATTEMPTS = 36
 const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
 const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 const activePolls = new Set()
@@ -17,8 +19,8 @@ function normalizeStatus(status) {
 
 function resolveRecordStatus(record) {
   const status = normalizeStatus(record?.status)
-  if (status === 'completed' || status === 'failed') return status
   if (record?.imagePath) return 'completed'
+  if (status === 'completed' || status === 'failed') return status
   return status || 'processing'
 }
 
@@ -62,6 +64,12 @@ function writeCache(data) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isTransientPollError(error) {
+  const status = error?.response?.status
+  if (!status) return true
+  return status === 408 || status === 429 || status >= 500
 }
 
 function isInvalidKeyError(e) {
@@ -292,11 +300,23 @@ export const useUserStore = defineStore('user', () => {
 
     activePolls.add(normalizedId)
     try {
+      let lastTransientError = null
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await sleep(POLL_INTERVAL_MS)
-        const params = keyCode.value ? { keyCode: keyCode.value } : undefined
-        const { data } = await api.get(`/user/generate/${normalizedId}`, { params })
-        if (data.code !== 200) throw new Error(data.message)
+        let data
+        try {
+          const params = keyCode.value ? { keyCode: keyCode.value } : undefined
+          const response = await api.get(`/user/generate/${normalizedId}`, { params })
+          data = response.data
+          if (data.code !== 200) throw new Error(data.message)
+          lastTransientError = null
+        } catch (error) {
+          if (isTransientPollError(error)) {
+            lastTransientError = error
+            continue
+          }
+          throw error
+        }
 
         const record = data.data
         upsertHistoryRecord(record)
@@ -308,6 +328,11 @@ export const useUserStore = defineStore('user', () => {
         }
         if (status === 'failed') {
           await syncCreditsFromServer()
+          try {
+            useConversationsStore().failAssistantForRecord(normalizedId, record.errorMessage || '生成失败')
+          } catch {
+            /* ignore */
+          }
           throw new Error(record.errorMessage || '生成失败')
         }
       }
@@ -325,20 +350,46 @@ export const useUserStore = defineStore('user', () => {
     await Promise.allSettled(
       pendingIds.map(id =>
         pollRecordStatus(id).catch(err => {
-          try {
-            useConversationsStore().failAssistantForRecord(id, err.message)
-          } catch {
-            /* ignore */
-          }
+          recoverRecordAfterPollError(id, err.message).catch(() => {})
         })
       )
     )
   }
 
+  async function recoverRecordAfterPollError(recordId, errorMessage) {
+    const normalizedId = Number(recordId)
+    for (let i = 0; i < RECOVERY_MAX_ATTEMPTS; i++) {
+      await sleep(RECOVERY_INTERVAL_MS)
+      await fetchHistory().catch(() => {})
+      const latest = history.value.find(item => Number(item.id) === normalizedId)
+      if (resolveRecordStatus(latest) === 'completed') {
+        try {
+          useConversationsStore().syncRecord(latest)
+          useConversationsStore().syncFromHistoryRecords(history.value)
+        } catch {
+          /* ignore */
+        }
+        return latest
+      }
+      if (resolveRecordStatus(latest) === 'processing') {
+        continue
+      }
+      if (resolveRecordStatus(latest) === 'failed') {
+        try {
+          useConversationsStore().failAssistantForRecord(recordId, latest.errorMessage || errorMessage)
+        } catch {
+          /* ignore */
+        }
+        return latest
+      }
+    }
+    return null
+  }
+
   async function generate({ prompt, type, sourceImage, model }) {
     generating.value = true
     try {
-      const { data } = await api.post('/user/generate', {
+      const { data } = await generateApi.post('/user/generate', {
         keyCode: keyCode.value,
         prompt,
         type,
@@ -352,11 +403,7 @@ export const useUserStore = defineStore('user', () => {
 
       if (resolveRecordStatus(data.data) === 'processing') {
         pollRecordStatus(data.data.id).catch(err => {
-          try {
-            useConversationsStore().failAssistantForRecord(data.data.id, err.message)
-          } catch {
-            /* ignore */
-          }
+          recoverRecordAfterPollError(data.data.id, err.message).catch(() => {})
         })
       }
 

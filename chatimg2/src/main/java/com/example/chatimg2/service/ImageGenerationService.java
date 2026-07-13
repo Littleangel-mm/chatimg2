@@ -105,9 +105,8 @@ public class ImageGenerationService {
 
     private GenerationRecord normalizeCompletedRecord(GenerationRecord record) {
         boolean changed = repairUserImagePath(record);
-        if ("processing".equals(record.getStatus())
-                && record.getImagePath() != null
-                && !record.getImagePath().isBlank()) {
+        if (record.getImagePath() != null && !record.getImagePath().isBlank()
+                && (!"completed".equals(record.getStatus()) || record.getErrorMessage() != null)) {
             record.setStatus("completed");
             record.setErrorMessage(null);
             changed = true;

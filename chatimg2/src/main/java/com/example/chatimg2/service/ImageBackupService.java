@@ -88,8 +88,7 @@ public class ImageBackupService {
 
     private Path resolveExistingPath(String imageUrl) {
         if (imageUrl.startsWith("/api/images/") || imageUrl.startsWith("/img/")) {
-            String fileName = imageUrl.substring(imageUrl.lastIndexOf('/') + 1);
-            return storageConfig.getBackupDir().resolve(fileName);
+            return storageConfig.resolveReadableImageFile(imageUrl);
         }
         if (!imageUrl.contains("/") && !imageUrl.startsWith("http")) {
             return storageConfig.getBackupDir().resolve(imageUrl);

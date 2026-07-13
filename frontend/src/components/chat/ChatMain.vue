@@ -251,8 +251,8 @@ async function send() {
     if (isImg2img) clearSource()
   } catch (e) {
     const msg = e.response?.data?.message || e.message || '\u751f\u6210\u5931\u8d25'
-    convStore.failLatestAssistant(msg)
     error.value = msg
+    userStore.fetchHistory().catch(() => {})
     convStore.syncRemote().catch(() => false)
   }
 
