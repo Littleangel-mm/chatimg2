@@ -29,6 +29,7 @@ public final class DatabaseMigration {
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS error_message TEXT");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_id INTEGER");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
+            stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS client_message_id VARCHAR(120)");
             stmt.execute("UPDATE generation_records SET status = 'completed' WHERE image_url IS NOT NULL AND (status IS NULL OR status = 'processing')");
             stmt.execute("UPDATE generation_records SET status = 'processing' WHERE image_url IS NULL AND (status IS NULL OR status = '')");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS task_code VARCHAR(32)");
@@ -38,6 +39,7 @@ public final class DatabaseMigration {
             stmt.execute("UPDATE generation_records SET image_url = regexp_replace(image_url, '^.*/', '') WHERE image_url IS NOT NULL AND image_url LIKE '%/%'");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_id ON generation_records(user_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_email ON generation_records(user_email)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_client_message_id ON generation_records(client_message_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_recovery ON generation_records(status, created_at)");
             stmt.execute("ALTER TABLE generation_records ALTER COLUMN key_id DROP NOT NULL");
 
@@ -149,6 +151,8 @@ public final class DatabaseMigration {
                     ")");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)");
+            stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_id VARCHAR(120)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_client_id ON chat_messages(conversation_id, client_id)");
 
             log.info("Database migration completed (auth, generation_records.*, distributed_locks, activation_keys.*, inspiration_prompts, chat_*)");
         } catch (SQLException e) {

@@ -323,42 +323,4 @@ async function generate() {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
-
-@media (max-width: 768px) {
-  .generator {
-    max-width: none;
-    padding: 6px;
-  }
-
-  .generator-body {
-    padding: 12px;
-  }
-
-  .mode-tabs {
-    margin-bottom: 10px;
-  }
-
-  .tab {
-    padding: 10px 8px;
-    font-size: 13px;
-  }
-
-  .upload-label {
-    padding: 28px 14px;
-  }
-
-  .controls {
-    grid-template-columns: 1fr;
-  }
-
-  .generate-row {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .generate-btn {
-    width: 100%;
-  }
-}
 </style>

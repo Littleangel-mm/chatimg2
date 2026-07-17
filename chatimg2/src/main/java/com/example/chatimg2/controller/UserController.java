@@ -72,7 +72,8 @@ public class UserController {
                         request.getPrompt(),
                         request.getType(),
                         request.getSourceImage(),
-                        request.getModel());
+                        request.getModel(),
+                        request.getClientMessageId());
             } else {
                 if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
                     return ApiResponse.error(401, "请先登录或激活密钥");
@@ -82,7 +83,8 @@ public class UserController {
                         request.getPrompt(),
                         request.getType(),
                         request.getSourceImage(),
-                        request.getModel());
+                        request.getModel(),
+                        request.getClientMessageId());
             }
             return ApiResponse.success("任务已提交，正在生成中", record);
         } catch (RuntimeException e) {

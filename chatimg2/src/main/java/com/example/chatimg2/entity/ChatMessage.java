@@ -17,6 +17,9 @@ public class ChatMessage {
     @Column(name = "conversation_id", nullable = false)
     private Integer conversationId;
 
+    @Column(name = "client_id", length = 120)
+    private String clientId;
+
     @Column(nullable = false, length = 20)
     private String role;
 

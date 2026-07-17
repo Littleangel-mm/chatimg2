@@ -56,10 +56,6 @@ onMounted(() => {
 }
 
 @media (max-width: 768px) {
-  .chat-layout {
-    height: 100svh;
-  }
-
   .sidebar-wrap {
     position: fixed;
     left: 0;

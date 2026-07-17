@@ -108,15 +108,4 @@ async function submit() {
 }
 
 .back-link:hover { color: #fff; }
-
-@media (max-width: 520px) {
-  .admin-page {
-    align-items: flex-start;
-    padding: 18px 12px;
-  }
-
-  .login-card {
-    padding: 28px 18px;
-  }
-}
 </style>

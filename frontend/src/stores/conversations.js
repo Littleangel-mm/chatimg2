@@ -110,6 +110,34 @@ function recordMatchesConversation(record, conv, userMsg = null) {
   return type === expectedType
 }
 
+function recordMatchesClientMessage(record, msg) {
+  return !!record?.clientMessageId && !!msg?.id && record.clientMessageId === msg.id
+}
+
+function isNearMessageTime(record, msg, userMsg) {
+  const recordTime = recordCreatedTime(record)
+  if (!recordTime) return false
+  const start = Number(userMsg?.createdAt || msg?.createdAt || 0)
+  if (!start) return false
+  return recordTime >= start - 60 * 1000 && recordTime <= start + 6 * 60 * 60 * 1000
+}
+
+function sourceImageLooksSame(record, userMsg) {
+  const current = userMsg?.sourceImage || ''
+  const source = record?.sourceImagePath || ''
+  if (!current || current.startsWith('data:') || !source) return true
+  return current === source
+}
+
+function canRecoverRecordForMessage(record, conv, msg, userMsg) {
+  if (recordMatchesClientMessage(record, msg)) return true
+  if (msg?.recordId || msg?.record?.id || record?.clientMessageId) return false
+  return record?.prompt === userMsg?.content &&
+    recordMatchesConversation(record, conv, userMsg) &&
+    sourceImageLooksSame(record, userMsg) &&
+    isNearMessageTime(record, msg, userMsg)
+}
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -194,22 +222,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
-  function applyRemotePayload(payload) {
-    const remoteConversations = payload?.conversations || []
-    if (!remoteConversations.length) {
-      return false
-    }
-
-    const preferredActiveId = activeId.value
-    let filteredDeleted = false
-    conversations.value = remoteConversations
-      .filter(conv => {
-        const clientId = conv.clientId
-        const keep = !clientId || !deletedConversationIds.value.has(clientId)
-        if (!keep) filteredDeleted = true
-        return keep
-      })
-      .map(conv => ({
+  function materializeRemoteConversation(conv) {
+    return {
       id: conv.clientId || uid(),
       title: conv.title || defaultTitle('', conv.type),
       type: conv.type === 'img2img' ? 'img2img' : 'text2img',
@@ -226,7 +240,84 @@ export const useConversationsStore = defineStore('conversations', () => {
         errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
         createdAt: msg.createdAt || Date.now()
       }))
-    }))
+    }
+  }
+
+  function mergeMessage(localMsg, remoteMsg) {
+    if (!localMsg) return remoteMsg
+    if (!remoteMsg) return localMsg
+    const localStatus = resolveRecordStatus(localMsg.record || { status: localMsg.status })
+    const remoteStatus = resolveRecordStatus(remoteMsg.record || { status: remoteMsg.status })
+    const remoteHasResult = remoteStatus === 'completed' || remoteStatus === 'failed' || !!remoteMsg.recordId
+    if (remoteHasResult || localStatus !== 'processing') {
+      return {
+        ...localMsg,
+        ...remoteMsg,
+        sourceImage: remoteMsg.sourceImage || localMsg.sourceImage || null,
+        record: remoteMsg.record || localMsg.record || null
+      }
+    }
+    return {
+      ...remoteMsg,
+      ...localMsg,
+      sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
+      record: localMsg.record || remoteMsg.record || null
+    }
+  }
+
+  function mergeMessages(localMessages = [], remoteMessages = []) {
+    const localById = new Map(localMessages.map(msg => [msg.id, msg]))
+    return remoteMessages
+      .map(remoteMsg => mergeMessage(localById.get(remoteMsg.id), remoteMsg))
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+  }
+
+  function mergeConversation(localConv, remoteConv) {
+    if (!localConv) return remoteConv
+    return {
+      ...remoteConv,
+      messages: mergeMessages(localConv.messages || [], remoteConv.messages || [])
+    }
+  }
+
+  function applyRemotePayload(payload) {
+    const remoteConversations = payload?.conversations || []
+    if (!remoteConversations.length) {
+      conversations.value = []
+      activeId.value = null
+      writeStored(boundKeyCode.value, {
+        conversations: conversations.value,
+        activeId: activeId.value,
+        deletedConversationIds: [...deletedConversationIds.value]
+      })
+      return true
+    }
+
+    const preferredActiveId = activeId.value
+    const localById = new Map(conversations.value.map(conv => [conv.id, conv]))
+    const remoteIds = new Set()
+    let filteredDeleted = false
+
+    const merged = remoteConversations
+      .filter(conv => {
+        const clientId = conv.clientId
+        const keep = !clientId || !deletedConversationIds.value.has(clientId)
+        if (!keep) filteredDeleted = true
+        return keep
+      })
+      .map(conv => {
+        const remoteConv = materializeRemoteConversation(conv)
+        remoteIds.add(remoteConv.id)
+        return mergeConversation(localById.get(remoteConv.id), remoteConv)
+      })
+
+    for (const localConv of conversations.value) {
+      if (!remoteIds.has(localConv.id) && deletedConversationIds.value.has(localConv.id)) {
+        filteredDeleted = true
+      }
+    }
+
+    conversations.value = merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     activeId.value = conversations.value.some(conv => conv.id === preferredActiveId)
       ? preferredActiveId
       : conversations.value.some(conv => conv.id === payload.activeId)
@@ -423,7 +514,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       }
 
       if (!matched) {
-        const pending = findPendingAssistantForRecord(conv, record)
+        const pending = findAssistantForRecordClientMessage(conv, record) || findPendingAssistantForRecord(conv, record)
         if (pending) {
           pending.recordId = record.id
           pending.status = resolveRecordStatus(record)
@@ -440,6 +531,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (changed) persist()
   }
 
+  function findAssistantForRecordClientMessage(conv, record) {
+    if (!record?.clientMessageId) return null
+    return (conv.messages || []).find(msg =>
+      msg.role === 'assistant' && msg.id === record.clientMessageId
+    ) || null
+  }
+
   function findPendingAssistantForRecord(conv, record) {
     const pending = [...(conv.messages || [])].reverse().find(msg => {
       if (msg.role !== 'assistant' || msg.recordId || msg.record?.id) return false
@@ -448,15 +546,11 @@ export const useConversationsStore = defineStore('conversations', () => {
 
       const userMsg = previousUserMessage(conv, msg)
       if (!userMsg) return false
-      if (record?.prompt && userMsg.content !== record.prompt) return false
-      return recordMatchesConversation(record, conv, userMsg)
+      return canRecoverRecordForMessage(record, conv, msg, userMsg)
     })
     if (pending) return pending
 
-    if (conv.id !== activeId.value) return null
-    return [...(conv.messages || [])].reverse().find(
-      msg => msg.role === 'assistant' && msg.status === 'processing' && !msg.recordId && !msg.record?.id
-    )
+    return null
   }
 
   function previousUserMessage(conv, assistantMsg) {
@@ -555,6 +649,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const currentStatus = resolveRecordStatus(msg.record || { status: msg.status })
         const needsRecovered = currentStatus === 'processing' || !msg.record?.imagePath
         if (!needsRecovered) continue
+        if (msg.recordId || msg.record?.id) continue
 
         const userMsg = conv.messages[i - 1]
         if (!userMsg || userMsg.role !== 'user') continue
@@ -562,9 +657,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const candidates = records
           .filter(record =>
             record?.id != null &&
-            Number(record.id) !== Number(msg.recordId || msg.record?.id) &&
-            record?.prompt === userMsg.content &&
-            recordMatchesConversation(record, conv, userMsg) &&
+            canRecoverRecordForMessage(record, conv, msg, userMsg) &&
             resolveRecordStatus(record) === 'completed' &&
             !!record.imagePath
           )

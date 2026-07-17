@@ -32,7 +32,8 @@ public class GenerationRecordService {
     private static final long DB_SAVE_RETRY_DELAY_MS = 3000L;
 
     public com.example.chatimg2.entity.GenerationRecord createPendingRecord(Integer keyId, String prompt,
-                                                                            String generationType, String sourceImagePath) {
+                                                                            String generationType, String sourceImagePath,
+                                                                            String clientMessageId) {
         try {
             return runDbOperationWithRetry(() -> {
                 com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
@@ -45,6 +46,7 @@ public class GenerationRecordService {
                     pending.setPrompt(prompt);
                     pending.setGenerationType(generationType);
                     pending.setSourceImagePath(sourceImagePath);
+                    pending.setClientMessageId(normalizeClientMessageId(clientMessageId));
                     pending.setCreditsCost(CREDITS_PER_GENERATION);
                     pending.setStatus("processing");
                     return recordRepository.save(pending);
@@ -60,7 +62,8 @@ public class GenerationRecordService {
     }
 
     public com.example.chatimg2.entity.GenerationRecord createPendingRecordForUser(UserAccount user, String prompt,
-                                                                                    String generationType, String sourceImagePath) {
+                                                                                    String generationType, String sourceImagePath,
+                                                                                    String clientMessageId) {
         try {
             return runDbOperationWithRetry(() -> {
                 com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
@@ -82,6 +85,7 @@ public class GenerationRecordService {
                     pending.setPrompt(prompt);
                     pending.setGenerationType(generationType);
                     pending.setSourceImagePath(sourceImagePath);
+                    pending.setClientMessageId(normalizeClientMessageId(clientMessageId));
                     pending.setCreditsCost(CREDITS_PER_GENERATION);
                     pending.setStatus("processing");
                     return recordRepository.save(pending);
@@ -257,5 +261,13 @@ public class GenerationRecordService {
             return "unknown";
         }
         return message.length() > 500 ? message.substring(0, 500) : message;
+    }
+
+    private String normalizeClientMessageId(String clientMessageId) {
+        if (clientMessageId == null || clientMessageId.isBlank()) {
+            return null;
+        }
+        String value = clientMessageId.trim();
+        return value.length() > 120 ? value.substring(0, 120) : value;
     }
 }

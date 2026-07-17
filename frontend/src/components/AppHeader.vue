@@ -151,43 +151,5 @@ function onAdminEnter() {
 
 @media (max-width: 768px) {
   .nav { display: none; }
-
-  .header-inner {
-    height: auto;
-    min-height: 60px;
-    gap: 10px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-
-  .logo {
-    font-size: 21px;
-  }
-
-  .header-actions {
-    gap: 8px;
-    margin-left: auto;
-  }
-
-  .credits-badge {
-    padding: 6px 10px;
-    font-size: 12px;
-  }
-
-  .header-actions .btn-ghost {
-    padding: 8px 10px;
-    font-size: 12px;
-  }
-}
-
-@media (max-width: 420px) {
-  .header-inner {
-    flex-wrap: wrap;
-  }
-
-  .header-actions {
-    width: 100%;
-    justify-content: flex-end;
-  }
 }
 </style>

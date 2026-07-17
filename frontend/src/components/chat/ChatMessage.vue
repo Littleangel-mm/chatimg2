@@ -223,39 +223,4 @@ function extractPolicyAdvice(text) {
 .text-muted {
   color: var(--text-muted);
 }
-
-@media (max-width: 768px) {
-  .message {
-    gap: 10px;
-    padding: 14px 0;
-  }
-
-  .avatar {
-    width: 30px;
-    height: 30px;
-    font-size: 10px;
-  }
-
-  .text {
-    font-size: 14px;
-  }
-
-  .message.user .text {
-    max-width: 100%;
-    padding: 10px 13px;
-  }
-
-  .source-thumb {
-    max-width: min(180px, 70vw);
-    max-height: 150px;
-  }
-
-  .assistant-image img {
-    max-height: 62vh;
-  }
-
-  .assistant-loading {
-    align-items: flex-start;
-  }
-}
 </style>

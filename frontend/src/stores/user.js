@@ -393,7 +393,7 @@ export const useUserStore = defineStore('user', () => {
     return null
   }
 
-  async function generate({ prompt, type, sourceImage, model }) {
+  async function generate({ prompt, type, sourceImage, model, clientMessageId }) {
     generating.value = true
     try {
       const { data } = await generateApi.post('/user/generate', {
@@ -401,7 +401,8 @@ export const useUserStore = defineStore('user', () => {
         prompt,
         type,
         model,
-        sourceImage
+        sourceImage,
+        clientMessageId
       })
       if (data.code !== 200) throw new Error(data.message)
 

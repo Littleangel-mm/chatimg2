@@ -41,6 +41,9 @@ public class GenerationRecord {
     @Column(name = "source_image_path", length = 500)
     private String sourceImagePath;
 
+    @Column(name = "client_message_id", length = 120)
+    private String clientMessageId;
+
     @Column(name = "credits_cost", nullable = false)
     private Integer creditsCost = 20;
 

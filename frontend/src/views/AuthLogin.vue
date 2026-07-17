@@ -108,19 +108,4 @@ async function submit() {
   color: var(--text-muted);
   font-size: 14px;
 }
-
-@media (max-width: 520px) {
-  .auth-page {
-    align-items: flex-start;
-    padding: 18px 12px;
-  }
-
-  .auth-card {
-    padding: 28px 18px;
-  }
-
-  .auth-card h1 {
-    font-size: 24px;
-  }
-}
 </style>

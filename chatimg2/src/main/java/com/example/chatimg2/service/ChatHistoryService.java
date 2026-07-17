@@ -106,22 +106,7 @@ public class ChatHistoryService {
             conversation.setUpdatedAt(fromMillis(dto.getUpdatedAt()));
             conversation = conversationRepository.save(conversation);
 
-            messageRepository.deleteByConversationId(conversation.getId());
-            List<ChatMessage> messages = toMessages(conversation.getId(), dto.getMessages());
-            if (!messages.isEmpty()) {
-                messageRepository.saveAll(messages);
-            }
-        }
-
-        for (ChatConversation conversation : existing) {
-            String clientId = conversation.getClientId();
-            if (clientId != null
-                    && conversation.getDeletedAt() == null
-                    && !incomingClientIds.contains(clientId)) {
-                conversation.setDeletedAt(now);
-                conversation.setUpdatedAt(now);
-                conversationRepository.save(conversation);
-            }
+            upsertMessages(conversation.getId(), dto.getMessages());
         }
 
         ChatSyncResponse response = load(user);
@@ -147,7 +132,7 @@ public class ChatHistoryService {
 
     private ChatMessageDto toDto(ChatMessage message) {
         ChatMessageDto dto = new ChatMessageDto();
-        dto.setClientId(String.valueOf(message.getId()));
+        dto.setClientId(message.getClientId() != null ? message.getClientId() : String.valueOf(message.getId()));
         dto.setRole(message.getRole());
         dto.setContent(message.getContent());
         dto.setSourceImage(message.getImagePath());
@@ -160,9 +145,19 @@ public class ChatHistoryService {
         return dto;
     }
 
-    private List<ChatMessage> toMessages(Integer conversationId, List<ChatMessageDto> dtos) {
+    private void upsertMessages(Integer conversationId, List<ChatMessageDto> dtos) {
         if (dtos == null || dtos.isEmpty()) {
-            return List.of();
+            return;
+        }
+        Map<String, ChatMessage> existingByClientId = new HashMap<>();
+        Map<Integer, ChatMessage> existingById = new HashMap<>();
+        for (ChatMessage message : messageRepository.findByConversationId(conversationId)) {
+            if (message.getId() != null) {
+                existingById.put(message.getId(), message);
+            }
+            if (message.getClientId() != null && !message.getClientId().isBlank()) {
+                existingByClientId.put(message.getClientId(), message);
+            }
         }
         List<ChatMessage> messages = new ArrayList<>();
         for (ChatMessageDto dto : dtos) {
@@ -170,8 +165,10 @@ public class ChatHistoryService {
             if (role == null) {
                 continue;
             }
-            ChatMessage message = new ChatMessage();
+            String clientId = normalizedClientId(dto.getClientId());
+            ChatMessage message = resolveExistingMessage(clientId, existingByClientId, existingById);
             message.setConversationId(conversationId);
+            message.setClientId(clientId);
             message.setRole(role);
             message.setContent(resolveContent(dto, role));
             message.setImagePath(safeImagePath(dto.getSourceImage()));
@@ -180,7 +177,27 @@ public class ChatHistoryService {
             message.setCreatedAt(fromMillis(dto.getCreatedAt()));
             messages.add(message);
         }
-        return messages;
+        if (!messages.isEmpty()) {
+            messageRepository.saveAll(messages);
+        }
+    }
+
+    private ChatMessage resolveExistingMessage(String clientId, Map<String, ChatMessage> existingByClientId,
+                                               Map<Integer, ChatMessage> existingById) {
+        if (clientId != null) {
+            ChatMessage byClientId = existingByClientId.get(clientId);
+            if (byClientId != null) {
+                return byClientId;
+            }
+            try {
+                ChatMessage byLegacyId = existingById.get(Integer.parseInt(clientId));
+                if (byLegacyId != null && byLegacyId.getClientId() == null) {
+                    return byLegacyId;
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return new ChatMessage();
     }
 
     private String resolveContent(ChatMessageDto dto, String role) {

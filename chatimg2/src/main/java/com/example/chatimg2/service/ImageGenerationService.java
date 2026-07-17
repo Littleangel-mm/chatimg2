@@ -28,7 +28,7 @@ public class ImageGenerationService {
     private static final int CREDITS_PER_GENERATION = 20;
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
-                                             String sourceImageBase64, String model) {
+                                             String sourceImageBase64, String model, String clientMessageId) {
         ActivationKey key = keyService.activate(keyCode)
                 .orElseThrow(() -> new RuntimeException("密钥无效或已禁用"));
 
@@ -36,26 +36,36 @@ public class ImageGenerationService {
             throw new RuntimeException("积分不足，剩余 " + key.getRemainingCredits());
         }
 
+        GenerationRecord existing = findExistingClientRecord(key.getId(), null, clientMessageId);
+        if (existing != null) {
+            return normalizeCompletedRecord(existing);
+        }
+
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
 
-        GenerationRecord record = recordService.createPendingRecord(key.getId(), prompt, generationType, sourceImagePath);
+        GenerationRecord record = recordService.createPendingRecord(key.getId(), prompt, generationType, sourceImagePath, clientMessageId);
         asyncGenerationExecutor.runGeneration(
                 record.getId(), record.getTaskCode(), key.getId(), null, prompt, generationType, sourceImagePath, model, null);
         return record;
     }
 
     public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
-                                                    String sourceImageBase64, String model) {
+                                                    String sourceImageBase64, String model, String clientMessageId) {
         if (user.getRemainingCredits() < CREDITS_PER_GENERATION) {
             throw new RuntimeException("积分不足，剩余 " + user.getRemainingCredits());
+        }
+
+        GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
+        if (existing != null) {
+            return normalizeCompletedRecord(existing);
         }
 
         String ownerFolder = authService.safeEmailFolder(user.getEmail());
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
 
-        GenerationRecord record = recordService.createPendingRecordForUser(user, prompt, generationType, sourceImagePath);
+        GenerationRecord record = recordService.createPendingRecordForUser(user, prompt, generationType, sourceImagePath, clientMessageId);
         asyncGenerationExecutor.runGeneration(
                 record.getId(), record.getTaskCode(), null, user.getId(), prompt, generationType, sourceImagePath, model, ownerFolder);
         return record;
@@ -136,6 +146,22 @@ public class ImageGenerationService {
 
     private String resolveGenerationType(String type) {
         return "img2img".equals(type) ? "img2img" : "text2img";
+    }
+
+    private GenerationRecord findExistingClientRecord(Integer keyId, Integer userId, String clientMessageId) {
+        if (clientMessageId == null || clientMessageId.isBlank()) {
+            return null;
+        }
+        String normalized = clientMessageId.trim();
+        if (userId != null) {
+            return recordRepository.findFirstByUserIdAndClientMessageIdOrderByCreatedAtDesc(userId, normalized)
+                    .orElse(null);
+        }
+        if (keyId != null) {
+            return recordRepository.findFirstByKeyIdAndClientMessageIdOrderByCreatedAtDesc(keyId, normalized)
+                    .orElse(null);
+        }
+        return null;
     }
 
     private String saveSourceIfNeeded(String generationType, String sourceImageBase64, String ownerFolder) {

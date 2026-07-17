@@ -331,25 +331,4 @@ async function logout() {
 .logout-link:hover {
   color: var(--text);
 }
-
-@media (max-width: 768px) {
-  .sidebar,
-  .sidebar.collapsed {
-    width: var(--sidebar-width);
-    overflow: hidden;
-    border-right: 1px solid var(--border);
-  }
-
-  .sidebar-top {
-    padding: 10px 12px;
-  }
-
-  .new-actions {
-    padding: 10px;
-  }
-
-  .conv-list {
-    padding: 0 6px 10px;
-  }
-}
 </style>
