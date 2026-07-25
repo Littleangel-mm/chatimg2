@@ -4,12 +4,15 @@ import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.GenerateRequest;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.exception.AppException;
+import com.example.chatimg2.exception.BusinessException;
 import com.example.chatimg2.service.AuthPrincipal;
 import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -20,6 +23,7 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
+@Slf4j
 public class UserController {
 
     private final KeyService keyService;
@@ -88,7 +92,7 @@ public class UserController {
             }
             return ApiResponse.success("任务已提交，正在生成中", record);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
         }
     }
 
@@ -110,7 +114,7 @@ public class UserController {
             }
             return ApiResponse.success(record);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
         }
     }
 
@@ -131,7 +135,19 @@ public class UserController {
             }
             return ApiResponse.success(history);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
         }
+    }
+
+    private <T> ApiResponse<T> requestError(RuntimeException error) {
+        if (error instanceof BusinessException businessError) {
+            return ApiResponse.error(400, businessError.getUserMessage());
+        }
+        if (error instanceof AppException appError) {
+            log.error("User image request failed: code={}", appError.getErrorCode(), appError);
+            return ApiResponse.error(500, appError.getUserMessage());
+        }
+        log.error("Unexpected user image request failure", error);
+        return ApiResponse.error(500, "请求处理失败，请稍后重试");
     }
 }

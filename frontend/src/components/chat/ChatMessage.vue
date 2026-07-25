@@ -1,7 +1,8 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { normalizeImageUrl } from '../../api'
+import ImageLightbox from '../ImageLightbox.vue'
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -28,6 +29,11 @@ const isFailed = computed(() => {
 const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
+const previewImage = ref('')
+
+function openPreview(url) {
+  if (url) previewImage.value = url
+}
 
 function extractPolicyAdvice(text) {
   if (!text) return ''
@@ -55,6 +61,7 @@ function extractPolicyAdvice(text) {
           :src="sourceImageUrl"
           alt="参考图"
           class="source-thumb"
+          @click="openPreview(sourceImageUrl)"
         />
         <p class="text">{{ message.content }}</p>
       </template>
@@ -72,7 +79,12 @@ function extractPolicyAdvice(text) {
           <p v-if="displayError">{{ displayError }}</p>
         </div>
         <div v-else-if="imageUrl" class="assistant-image">
-          <img :src="imageUrl" :alt="message.record?.prompt || '生成结果'" loading="lazy" />
+          <img
+            :src="imageUrl"
+            :alt="message.record?.prompt || '生成结果'"
+            loading="lazy"
+            @click="openPreview(imageUrl)"
+          />
           <p v-if="message.record?.taskCode" class="task-code">{{ message.record.taskCode }}</p>
         </div>
         <div v-else class="assistant-loading">
@@ -80,6 +92,11 @@ function extractPolicyAdvice(text) {
         </div>
       </template>
     </div>
+    <ImageLightbox
+      :src="previewImage"
+      :alt="message.record?.prompt || '图片预览'"
+      @close="previewImage = ''"
+    />
   </div>
 </template>
 
@@ -155,6 +172,7 @@ function extractPolicyAdvice(text) {
   margin-bottom: 8px;
   object-fit: cover;
   border: 1px solid var(--border);
+  cursor: zoom-in;
 }
 
 .assistant-loading {
@@ -211,6 +229,7 @@ function extractPolicyAdvice(text) {
   border-radius: 12px;
   border: 1px solid var(--border);
   display: block;
+  cursor: zoom-in;
 }
 
 .task-code {

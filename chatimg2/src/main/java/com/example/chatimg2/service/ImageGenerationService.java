@@ -4,6 +4,8 @@ import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.GenerationRecord;
 import com.example.chatimg2.entity.UserAccount;
+import com.example.chatimg2.exception.BusinessException;
+import com.example.chatimg2.exception.ImageDownloadException;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,14 +28,15 @@ public class ImageGenerationService {
     private final AuthService authService;
 
     private static final int CREDITS_PER_GENERATION = 20;
+    private static final int MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
                                              String sourceImageBase64, String model, String clientMessageId) {
         ActivationKey key = keyService.activate(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥无效或已禁用"));
+                .orElseThrow(() -> new BusinessException("KEY_INVALID", "密钥无效或已禁用"));
 
         if (key.getRemainingCredits() < CREDITS_PER_GENERATION) {
-            throw new RuntimeException("积分不足，剩余 " + key.getRemainingCredits());
+            throw new BusinessException("INSUFFICIENT_CREDITS", "积分不足，剩余 " + key.getRemainingCredits());
         }
 
         GenerationRecord existing = findExistingClientRecord(key.getId(), null, clientMessageId);
@@ -53,7 +56,7 @@ public class ImageGenerationService {
     public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
                                                     String sourceImageBase64, String model, String clientMessageId) {
         if (user.getRemainingCredits() < CREDITS_PER_GENERATION) {
-            throw new RuntimeException("积分不足，剩余 " + user.getRemainingCredits());
+            throw new BusinessException("INSUFFICIENT_CREDITS", "积分不足，剩余 " + user.getRemainingCredits());
         }
 
         GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
@@ -73,27 +76,27 @@ public class ImageGenerationService {
 
     public GenerationRecord getRecordStatus(String keyCode, Integer recordId) {
         ActivationKey key = keyService.getByKeyCode(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+                .orElseThrow(() -> new BusinessException("KEY_NOT_FOUND", "密钥不存在"));
         GenerationRecord record = recordRepository.findById(recordId)
-                .orElseThrow(() -> new RuntimeException("记录不存在"));
+                .orElseThrow(() -> new BusinessException("RECORD_NOT_FOUND", "记录不存在"));
         if (record.getKeyId() == null || !record.getKeyId().equals(key.getId())) {
-            throw new RuntimeException("无权查看此记录");
+            throw new BusinessException("RECORD_FORBIDDEN", "无权查看此记录");
         }
         return normalizeCompletedRecord(record);
     }
 
     public GenerationRecord getRecordStatusForUser(UserAccount user, Integer recordId) {
         GenerationRecord record = recordRepository.findById(recordId)
-                .orElseThrow(() -> new RuntimeException("记录不存在"));
+                .orElseThrow(() -> new BusinessException("RECORD_NOT_FOUND", "记录不存在"));
         if (!user.getId().equals(record.getUserId())) {
-            throw new RuntimeException("无权查看此记录");
+            throw new BusinessException("RECORD_FORBIDDEN", "无权查看此记录");
         }
         return normalizeCompletedRecord(record);
     }
 
     public List<GenerationRecord> getHistory(String keyCode) {
         ActivationKey key = keyService.getByKeyCode(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+                .orElseThrow(() -> new BusinessException("KEY_NOT_FOUND", "密钥不存在"));
         return recordRepository.findTop30ByKeyIdOrderByCreatedAtDesc(key.getId()).stream()
                 .map(this::normalizeCompletedRecord)
                 .filter(r -> !"failed".equals(r.getStatus()))
@@ -169,7 +172,7 @@ public class ImageGenerationService {
             return null;
         }
         if (sourceImageBase64 == null || sourceImageBase64.isBlank()) {
-            throw new RuntimeException("图生图需要上传参考图片");
+            throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传参考图片");
         }
         return saveSourceImage(decodeBase64Image(sourceImageBase64), ownerFolder);
     }
@@ -182,7 +185,18 @@ public class ImageGenerationService {
             mediaType = parseImageMediaType(header);
             data = base64.substring(base64.indexOf(",") + 1);
         }
-        return new DecodedImage(Base64.getDecoder().decode(data), mediaType, extensionForMediaType(mediaType));
+        try {
+            byte[] bytes = Base64.getDecoder().decode(data);
+            if (bytes.length == 0) {
+                throw new BusinessException("SOURCE_IMAGE_EMPTY", "参考图片内容为空");
+            }
+            if (bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+                throw new BusinessException("SOURCE_IMAGE_TOO_LARGE", "参考图片不能超过 20MB");
+            }
+            return new DecodedImage(bytes, mediaType, extensionForMediaType(mediaType));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("SOURCE_IMAGE_INVALID", "参考图片格式无效", e);
+        }
     }
 
     private String saveSourceImage(DecodedImage image, String ownerFolder) {
@@ -198,7 +212,7 @@ public class ImageGenerationService {
                     ? filePath.toString()
                     : "sources/" + ownerFolder + "/" + fileName;
         } catch (IOException e) {
-            throw new RuntimeException("保存参考图失败", e);
+            throw new ImageDownloadException("保存参考图失败", e);
         }
     }
 

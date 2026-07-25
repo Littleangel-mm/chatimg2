@@ -1,11 +1,21 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useUserStore } from '../stores/user'
 import { getImageUrl } from '../api'
+import ImageLightbox from './ImageLightbox.vue'
 
 const userStore = useUserStore()
 
 const items = computed(() => userStore.history)
+const previewImage = ref('')
+const previewAlt = ref('图片预览')
+
+function openPreview(item) {
+  const url = getImageUrl(item)
+  if (!url) return
+  previewImage.value = url
+  previewAlt.value = item.prompt || '生成结果'
+}
 </script>
 
 <template>
@@ -21,7 +31,7 @@ const items = computed(() => userStore.history)
       </div>
 
       <div v-else class="gallery-grid">
-        <div v-for="(item, index) in items" :key="item.id" class="gallery-item">
+        <div v-for="(item, index) in items" :key="item.id" class="gallery-item" @click="openPreview(item)">
           <div v-if="item.status === 'processing'" class="processing">
             <span class="spin">⟳</span>
             <span>生成中...</span>
@@ -42,6 +52,7 @@ const items = computed(() => userStore.history)
           </div>
         </div>
       </div>
+      <ImageLightbox :src="previewImage" :alt="previewAlt" @close="previewImage = ''" />
     </div>
   </section>
 </template>

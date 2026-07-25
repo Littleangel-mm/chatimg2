@@ -1,6 +1,7 @@
 package com.example.chatimg2.service;
 
 import com.example.chatimg2.config.ImageStorageConfig;
+import com.example.chatimg2.exception.ApiCallException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -109,6 +110,15 @@ public class AsyncGenerationExecutor {
     private String extractContentPolicyMessage(Throwable error) {
         Throwable current = error;
         while (current != null) {
+            if (current instanceof ApiCallException apiError) {
+                ImageApiErrorClassifier.ApiErrorDetails details = new ImageApiErrorClassifier.ApiErrorDetails(
+                        apiError.getUserMessage(), apiError.getApiErrorType(), apiError.getApiErrorCode());
+                if (ImageApiErrorClassifier.isContentPolicyError(details)
+                        && apiError.getUserMessage() != null
+                        && !apiError.getUserMessage().isBlank()) {
+                    return CONTENT_POLICY_ADVICE_PREFIX + apiError.getUserMessage().trim();
+                }
+            }
             String message = current.getMessage();
             String advice = extractAdviceFromMessage(message);
             if (advice != null) {

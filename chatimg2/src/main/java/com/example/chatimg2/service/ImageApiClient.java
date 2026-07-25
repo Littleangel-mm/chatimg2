@@ -1,5 +1,8 @@
 package com.example.chatimg2.service;
 
+import com.example.chatimg2.exception.ApiCallException;
+import com.example.chatimg2.exception.BusinessException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -26,7 +30,6 @@ public class ImageApiClient {
 
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String CONTENT_POLICY_ADVICE_PREFIX = "CONTENT_POLICY_ADVICE:";
     private static final String AUTO_IMAGE_SIZE = "auto";
     private static final String DEFAULT_IMAGE_SIZE = "1024x1024";
     private static final String PORTRAIT_IMAGE_SIZE = "1024x1536";
@@ -101,32 +104,36 @@ public class ImageApiClient {
     }
 
     public String textToImage(String prompt, String requestedModel, List<String> fallbacks) {
-        RuntimeException lastError = null;
+        ApiCallException lastError = null;
         List<String> models = buildText2imgModels(requestedModel, fallbacks);
+        if (models.isEmpty()) {
+            throw new BusinessException("IMAGE_MODEL_MISSING", "未配置可用的文生图模型");
+        }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
             List<String> sizes = buildSizeAttempts(resolveImageSizeFromPrompt(prompt));
             for (int sizeIndex = 0; sizeIndex < sizes.size(); sizeIndex++) {
                 String size = sizes.get(sizeIndex);
                 try {
-                var body = new java.util.HashMap<String, Object>();
-                body.put("model", model);
-                body.put("prompt", prompt);
-                body.put("n", 1);
-                if (size != null && !size.isBlank()) {
-                    body.put("size", size);
-                }
-                String jsonBody = objectMapper.writeValueAsString(body);
-                Request request = new Request.Builder()
-                        .url(getApiBaseUrl() + "/v1/images/generations")
-                        .addHeader("Authorization", "Bearer " + apiKey)
-                        .addHeader("Content-Type", "application/json")
-                        .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
-                        .build();
+                    var body = new java.util.HashMap<String, Object>();
+                    body.put("model", model);
+                    body.put("prompt", prompt);
+                    body.put("n", 1);
+                    if (size != null && !size.isBlank()) {
+                        body.put("size", size);
+                    }
+                    String jsonBody = objectMapper.writeValueAsString(body);
+                    Request request = new Request.Builder()
+                            .url(getApiBaseUrl() + "/v1/images/generations")
+                            .addHeader("Authorization", "Bearer " + apiKey)
+                            .addHeader("Content-Type", "application/json")
+                            .addHeader("Idempotency-Key", UUID.randomUUID().toString())
+                            .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
+                            .build();
 
-                log.info("Text2img trying model: {}, size={}", model, size == null ? "omitted" : size);
-                return resolveImageFromSubmit(request);
-                } catch (RuntimeException e) {
+                    log.info("Text2img trying model: {}, size={}", model, size == null ? "omitted" : size);
+                    return resolveImageFromSubmit(request);
+                } catch (ApiCallException e) {
                     lastError = e;
                     boolean hasNextSize = sizeIndex < sizes.size() - 1;
                     if (hasNextSize && shouldRetryText2imgWithNextSize(e)) {
@@ -139,20 +146,17 @@ public class ImageApiClient {
                         log.warn("Model {} not available, trying next...", model);
                         break;
                     }
-                    if (isTimeoutError(e) && hasNext) {
-                        log.warn("Model {} timed out, trying next...", model);
-                        break;
-                    }
-                    throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
-                } catch (Exception e) {
-                    throw new RuntimeException("文生图请求失败: " + e.getMessage(), e);
+                    throw e;
+                } catch (JsonProcessingException e) {
+                    throw new ApiCallException(null, "request_serialization_error", "invalid_request_body",
+                            false, "文生图请求序列化失败", "生图请求处理失败，请稍后重试", e);
                 }
             }
         }
-        throw new RuntimeException(
-                "文生图失败：当前 API 密钥分组未开通生图模型。"
-                        + "请到 maitokens 令牌管理重新创建密钥，选择含 gpt-image-2 的分组（如 sora/image）。"
-                        + "最后错误: " + (lastError != null ? lastError.getMessage() : "unknown"));
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的文生图模型");
     }
 
     public String imageEdit(String prompt, byte[] imageBytes, String model) {
@@ -165,54 +169,55 @@ public class ImageApiClient {
 
     public String imageEdit(String prompt, byte[] imageBytes, String imageMediaType, String fileName,
                             String requestedModel, List<String> fallbacks) {
-        RuntimeException lastError = null;
+        ApiCallException lastError = null;
         List<String> models = buildImageEditModels(requestedModel, fallbacks);
+        if (models.isEmpty()) {
+            throw new BusinessException("IMAGE_MODEL_MISSING", "未配置可用的图生图模型");
+        }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
             try {
                 return submitImageEdit(prompt, imageBytes, imageMediaType, fileName, model);
-            } catch (RuntimeException e) {
+            } catch (ApiCallException e) {
                 lastError = e;
                 boolean hasNext = i < models.size() - 1;
-                if (hasNext && (isModelNotFound(e) || isBadResponseBody(e) || isServerApiError(e) || isTimeoutError(e))) {
-                    log.warn("Img2img model {} failed, trying next...", model);
+                if (hasNext && isModelNotFound(e)) {
+                    log.warn("Img2img model {} is unavailable, trying next model", model);
                     continue;
                 }
-                throw new RuntimeException("图生图请求失败: " + e.getMessage(), e);
+                throw e;
             }
         }
-        throw new RuntimeException("图生图请求失败: " + (lastError != null ? lastError.getMessage() : "unknown"));
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的图生图模型");
     }
 
     private String submitImageEdit(String prompt, byte[] imageBytes, String imageMediaType,
                                    String fileName, String model) {
-        try {
-            String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
-            String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
-            String size = resolveImageSizeFromPrompt(prompt);
-            RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
-            MultipartBody body = new MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("image", uploadName, fileBody)
-                    .addFormDataPart("prompt", prompt)
-                    .addFormDataPart("model", model)
-                    .addFormDataPart("n", "1")
-                    .addFormDataPart("size", size)
-                    .build();
+        String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
+        String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
+        String size = resolveImageSizeFromPrompt(prompt);
+        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
+        MultipartBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("image", uploadName, fileBody)
+                .addFormDataPart("prompt", prompt)
+                .addFormDataPart("model", model)
+                .addFormDataPart("n", "1")
+                .addFormDataPart("size", size)
+                .build();
 
-            Request request = new Request.Builder()
-                    .url(getApiBaseUrl() + "/v1/images/edits")
-                    .addHeader("Authorization", "Bearer " + apiKey)
-                    .post(body)
-                    .build();
+        Request request = new Request.Builder()
+                .url(getApiBaseUrl() + "/v1/images/edits")
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .addHeader("Idempotency-Key", UUID.randomUUID().toString())
+                .post(body)
+                .build();
 
-            log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
-            return resolveImageFromSubmit(request);
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RuntimeException(e.getMessage(), e);
-        }
+        log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
+        return resolveImageFromSubmit(request);
     }
 
     private List<String> buildText2imgModels(String requestedModel, List<String> fallbacks) {
@@ -223,10 +228,12 @@ public class ImageApiClient {
         if (isGptImageModel(defaultText2imgModel)) {
             models.add(defaultText2imgModel.trim());
         }
-        fallbacks.stream()
-                .filter(this::isGptImageModel)
-                .map(String::trim)
-                .forEach(models::add);
+        if (fallbacks != null) {
+            fallbacks.stream()
+                    .filter(this::isGptImageModel)
+                    .map(String::trim)
+                    .forEach(models::add);
+        }
         return new ArrayList<>(models);
     }
 
@@ -235,10 +242,12 @@ public class ImageApiClient {
         if (isGptImageModel(requestedModel)) {
             models.add(requestedModel.trim());
         }
-        fallbacks.stream()
-                .filter(this::isGptImageModel)
-                .map(String::trim)
-                .forEach(models::add);
+        if (fallbacks != null) {
+            fallbacks.stream()
+                    .filter(this::isGptImageModel)
+                    .map(String::trim)
+                    .forEach(models::add);
+        }
         return new ArrayList<>(models);
     }
 
@@ -274,20 +283,12 @@ public class ImageApiClient {
         return new ArrayList<>(sizes);
     }
 
-    private boolean shouldRetryText2imgWithNextSize(RuntimeException error) {
-        String message = error.getMessage();
-        if (message == null) {
-            return true;
+    private boolean shouldRetryText2imgWithNextSize(ApiCallException error) {
+        Integer status = error.getHttpStatus();
+        if (status == null) {
+            return false;
         }
-        String normalized = message.toLowerCase(Locale.ROOT);
-        return normalized.contains("size")
-                || normalized.contains("invalid")
-                || normalized.contains("bad_request")
-                || normalized.contains("bad response")
-                || normalized.contains("502")
-                || normalized.contains("503")
-                || isServerApiError(error)
-                || isTimeoutError(error);
+        return ImageApiErrorClassifier.isSizeError(status, toErrorDetails(error));
     }
 
     private String normalizePrompt(String prompt) {
@@ -307,16 +308,16 @@ public class ImageApiClient {
         return false;
     }
 
-    private String resolveImageFromSubmit(Request request) throws IOException {
+    private String resolveImageFromSubmit(Request request) {
         int attempts = Math.max(1, submitMaxAttempts);
-        RuntimeException lastError = null;
+        ApiCallException lastError = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
             try (Response response = submitClient.newCall(request).execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
                 if (!response.isSuccessful()) {
-                    RuntimeException error = new RuntimeException("API调用失败: " + response.code() + " - " + extractApiError(responseBody));
+                    ApiCallException error = createResponseException(response.code(), responseBody);
                     lastError = error;
-                    if (isRetryableSubmitStatus(response.code()) && attempt < attempts) {
+                    if (error.isRetryable() && attempt < attempts) {
                         log.warn("API submit failed transiently, retry {}/{} after HTTP {}: {}",
                                 attempt, attempts, response.code(), truncate(responseBody, 300));
                         sleepBeforeSubmitRetry();
@@ -326,9 +327,26 @@ public class ImageApiClient {
                     throw error;
                 }
                 log.debug("API submit response: {}", truncate(responseBody, 500));
-                return resolveImageFromJson(objectMapper.readTree(responseBody));
+                JsonNode root;
+                try {
+                    root = objectMapper.readTree(responseBody);
+                } catch (JsonProcessingException e) {
+                    ApiCallException error = new ApiCallException(response.code(), "bad_response_body",
+                            "bad_response_body", true,
+                            "生图 API 返回了无法解析的数据: " + truncate(responseBody, 300),
+                            "生图服务返回异常，请稍后重试", e);
+                    lastError = error;
+                    if (attempt < attempts) {
+                        log.warn("API returned invalid JSON, retry {}/{}: {}",
+                                attempt, attempts, truncate(responseBody, 300));
+                        sleepBeforeSubmitRetry();
+                        continue;
+                    }
+                    throw error;
+                }
+                return resolveImageFromJson(root);
             } catch (java.net.SocketTimeoutException e) {
-                RuntimeException error = new RuntimeException("API 连接超时（生图耗时较长），请稍后重试", e);
+                ApiCallException error = createTransportException("生图 API 请求超时", e);
                 lastError = error;
                 if (attempt < attempts) {
                     log.warn("API submit timed out, retry {}/{}", attempt, attempts);
@@ -336,20 +354,29 @@ public class ImageApiClient {
                     continue;
                 }
                 throw error;
+            } catch (IOException e) {
+                ApiCallException error = createTransportException("生图 API 网络请求失败: " + e.getMessage(), e);
+                lastError = error;
+                if (attempt < attempts) {
+                    log.warn("API submit network error, retry {}/{}: {}", attempt, attempts, e.getMessage());
+                    sleepBeforeSubmitRetry();
+                    continue;
+                }
+                throw error;
             }
         }
-        throw lastError != null ? lastError : new RuntimeException("API submit failed");
-    }
-
-    private boolean isRetryableSubmitStatus(int statusCode) {
-        return statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504 || statusCode == 524;
+        if (lastError != null) {
+            throw lastError;
+        }
+        throw new ApiCallException(null, "unknown", "unknown", false,
+                "生图 API 请求未执行", "生图请求处理失败，请稍后重试");
     }
 
     private void sleepBeforeSubmitRetry() {
         sleepQuietly(Math.max(0, submitRetryDelayMs));
     }
 
-    private String resolveImageFromJson(JsonNode root) throws IOException {
+    private String resolveImageFromJson(JsonNode root) {
         String syncImage = extractImageUrl(root);
         if (syncImage != null) {
             return syncImage;
@@ -357,7 +384,8 @@ public class ImageApiClient {
 
         String status = extractStatus(root);
         if (status != null && isCompletedStatus(status)) {
-            throw new RuntimeException("任务已完成但未返回图片");
+            throw new ApiCallException(200, "bad_response_body", "missing_image", false,
+                    "生图任务已完成但未返回图片", "生图服务未返回图片，请稍后重试");
         }
 
         String taskId = extractTaskId(root);
@@ -366,10 +394,12 @@ public class ImageApiClient {
             return pollTaskUntilComplete(taskId);
         }
 
-        throw new RuntimeException("API返回数据中无图片或任务ID");
+        throw new ApiCallException(200, "bad_response_body", "missing_result", false,
+                "生图 API 返回数据中没有图片或任务 ID: " + truncate(root.toString(), 300),
+                "生图服务返回异常，请稍后重试");
     }
 
-    private String pollTaskUntilComplete(String taskId) throws IOException {
+    private String pollTaskUntilComplete(String taskId) {
         String pollUrl = getApiBaseUrl() + "/v1/tasks/" + taskId;
         sleepQuietly(pollInitialDelayMs);
 
@@ -387,12 +417,25 @@ public class ImageApiClient {
             try (Response response = pollClient.newCall(pollRequest).execute()) {
                 String body = response.body() != null ? response.body().string() : "";
                 if (!response.isSuccessful()) {
-                    log.warn("Poll task {} attempt {} HTTP {}: {}", taskId, attempt, response.code(), body);
+                    ApiCallException error = createResponseException(response.code(), body);
+                    if (!error.isRetryable()) {
+                        throw error;
+                    }
+                    log.warn("Poll task {} attempt {} transient HTTP {}: {}",
+                            taskId, attempt, response.code(), truncate(body, 300));
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
 
-                JsonNode root = objectMapper.readTree(body);
+                JsonNode root;
+                try {
+                    root = objectMapper.readTree(body);
+                } catch (JsonProcessingException e) {
+                    log.warn("Poll task {} attempt {} returned invalid JSON: {}",
+                            taskId, attempt, truncate(body, 300));
+                    sleepQuietly(pollIntervalMs);
+                    continue;
+                }
                 String status = extractStatus(root);
                 log.info("Poll task {} attempt {} status={}", taskId, attempt, status);
 
@@ -401,20 +444,34 @@ public class ImageApiClient {
                     if (imageUrl != null) {
                         return imageUrl;
                     }
-                    throw new RuntimeException("生图任务完成但未返回图片");
+                    throw new ApiCallException(200, "bad_response_body", "missing_image", false,
+                            "生图任务完成但未返回图片，taskId=" + taskId,
+                            "生图服务未返回图片，请稍后重试");
                 }
                 if (status != null && isFailedStatus(status)) {
-                    throw new RuntimeException("生图任务失败: " + extractTaskError(root));
+                    ImageApiErrorClassifier.ApiErrorDetails details =
+                            ImageApiErrorClassifier.parse(objectMapper, root.toString());
+                    throw new ApiCallException(200, details.type(), details.code(), false,
+                            "生图任务失败，taskId=" + taskId + ": " + details.message(),
+                            ImageApiErrorClassifier.isContentPolicyError(details)
+                                    ? details.message()
+                                    : "生成失败，请调整提示词或图片后重试");
                 }
+            } catch (java.net.SocketTimeoutException e) {
+                log.warn("Poll task {} attempt {} timed out", taskId, attempt);
+            } catch (IOException e) {
+                log.warn("Poll task {} attempt {} network error: {}", taskId, attempt, e.getMessage());
             }
 
             sleepQuietly(pollIntervalMs);
         }
 
-        throw new RuntimeException("生图超时（超过 " + (pollMaxWaitMs / 1000) + " 秒），请稍后重试");
+        throw new ApiCallException(null, "timeout", "poll_timeout", true,
+                "生图轮询超时，taskId=" + taskId + "，maxWaitMs=" + pollMaxWaitMs,
+                "生图等待超时，请稍后重试");
     }
 
-    private String extractImageUrl(JsonNode root) throws IOException {
+    private String extractImageUrl(JsonNode root) {
         String fromData = extractImageFromDataArray(root.get("data"));
         if (fromData != null) {
             return fromData;
@@ -445,7 +502,7 @@ public class ImageApiClient {
         return null;
     }
 
-    private String extractImageFromDataArray(JsonNode array) throws IOException {
+    private String extractImageFromDataArray(JsonNode array) {
         if (array == null || !array.isArray() || array.isEmpty()) {
             return null;
         }
@@ -490,11 +547,7 @@ public class ImageApiClient {
     }
 
     private String extractImageUrlSafe(JsonNode root) {
-        try {
-            return extractImageUrl(root);
-        } catch (IOException e) {
-            return null;
-        }
+        return extractImageUrl(root);
     }
 
     private String extractStatus(JsonNode root) {
@@ -514,22 +567,6 @@ public class ImageApiClient {
         return null;
     }
 
-    private String extractTaskError(JsonNode root) {
-        JsonNode error = root.get("error");
-        if (error != null) {
-            if (error.has("message")) {
-                return error.get("message").asText();
-            }
-            if (error.isTextual()) {
-                return error.asText();
-            }
-        }
-        if (root.has("message")) {
-            return root.get("message").asText();
-        }
-        return "unknown";
-    }
-
     private boolean isCompletedStatus(String status) {
         return COMPLETED_STATUSES.contains(status.toLowerCase());
     }
@@ -538,48 +575,13 @@ public class ImageApiClient {
         return FAILED_STATUSES.contains(status.toLowerCase());
     }
 
-    private boolean isModelNotFound(RuntimeException e) {
-        String msg = e.getMessage();
-        return msg != null && (msg.contains("model_not_found") || msg.contains("No available channel"));
+    private boolean isModelNotFound(ApiCallException error) {
+        return ImageApiErrorClassifier.isModelNotFound(toErrorDetails(error));
     }
 
-    private boolean isTimeoutError(Throwable e) {
-        Throwable current = e;
-        while (current != null) {
-            if (current instanceof java.net.SocketTimeoutException) {
-                return true;
-            }
-            String msg = current.getMessage();
-            if (msg != null && msg.toLowerCase().contains("timeout")) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private boolean isBadResponseBody(Throwable e) {
-        Throwable current = e;
-        while (current != null) {
-            String msg = current.getMessage();
-            if (msg != null && msg.contains("bad_response_body")) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private boolean isServerApiError(Throwable e) {
-        Throwable current = e;
-        while (current != null) {
-            String msg = current.getMessage();
-            if (msg != null && msg.matches(".*API调用失败: 5\\d\\d.*")) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
+    private ImageApiErrorClassifier.ApiErrorDetails toErrorDetails(ApiCallException error) {
+        return new ImageApiErrorClassifier.ApiErrorDetails(
+                error.getMessage(), error.getApiErrorType(), error.getApiErrorCode());
     }
 
     private String truncate(String text, int maxLen) {
@@ -589,22 +591,31 @@ public class ImageApiClient {
         return text.substring(0, maxLen) + "...";
     }
 
-    private String extractApiError(String errorBody) {
-        try {
-            JsonNode root = objectMapper.readTree(errorBody);
-            JsonNode err = root.get("error");
-            if (err != null && err.has("message")) {
-                String message = err.get("message").asText();
-                String type = err.has("type") ? err.get("type").asText("") : "";
-                String code = err.has("code") && !err.get("code").isNull() ? err.get("code").asText("") : "";
-                if ("image_generation_user_error".equals(type) || "content_policy_violation".equals(code)) {
-                    return CONTENT_POLICY_ADVICE_PREFIX + message;
-                }
-                return message;
-            }
-        } catch (Exception ignored) {
-        }
-        return errorBody.length() > 200 ? errorBody.substring(0, 200) : errorBody;
+    private ApiCallException createResponseException(int httpStatus, String responseBody) {
+        ImageApiErrorClassifier.ApiErrorDetails details =
+                ImageApiErrorClassifier.parse(objectMapper, responseBody);
+        boolean retryable = ImageApiErrorClassifier.isRetryable(httpStatus, details);
+        String internalMessage = "生图 API 调用失败: HTTP " + httpStatus
+                + ", type=" + blankAsUnknown(details.type())
+                + ", code=" + blankAsUnknown(details.code())
+                + ", message=" + details.message();
+        return new ApiCallException(
+                httpStatus,
+                details.type(),
+                details.code(),
+                retryable,
+                internalMessage,
+                ImageApiErrorClassifier.userMessage(httpStatus, details)
+        );
+    }
+
+    private ApiCallException createTransportException(String internalMessage, IOException cause) {
+        return new ApiCallException(null, "network_error", "network_error", true,
+                internalMessage, "生图服务连接失败，请稍后重试", cause);
+    }
+
+    private String blankAsUnknown(String value) {
+        return value == null || value.isBlank() ? "unknown" : value;
     }
 
     private String getApiBaseUrl() {
@@ -635,7 +646,8 @@ public class ImageApiClient {
             Thread.sleep(millis);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("生图轮询被中断", e);
+            throw new ApiCallException(null, "interrupted", "request_interrupted", false,
+                    "生图任务等待被中断", "生图任务已中断，请重新提交", e);
         }
     }
 }
