@@ -69,6 +69,7 @@ function openKeyModal() {
 }
 
 async function logout() {
+  await convStore.flushPendingDeletes().catch(() => false)
   await authStore.logout()
   userStore.logout()
   router.push('/login')

@@ -30,4 +30,12 @@ public class ChatController {
         AuthPrincipal principal = authService.requireUser(request);
         return ApiResponse.success(chatHistoryService.sync(principal.user(), syncRequest));
     }
+
+    @DeleteMapping("/conversations/{clientId}")
+    public ApiResponse<Void> deleteConversation(@PathVariable String clientId,
+                                                HttpServletRequest request) {
+        AuthPrincipal principal = authService.requireUser(request);
+        chatHistoryService.softDelete(principal.user(), clientId);
+        return ApiResponse.success(null);
+    }
 }

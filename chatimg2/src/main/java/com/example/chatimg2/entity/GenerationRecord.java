@@ -1,5 +1,6 @@
 package com.example.chatimg2.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -31,6 +32,11 @@ public class GenerationRecord {
     /** 图片相对路径（仅存文件名，如 TASK-20260621-XXX.png），前端拼接 /img/ 展示 */
     @Column(name = "image_url", length = 500)
     private String imagePath;
+
+    /** API 返回的远程结果地址，仅供后端补偿下载，不对前端暴露临时签名地址。 */
+    @JsonIgnore
+    @Column(name = "remote_image_url", columnDefinition = "TEXT")
+    private String remoteImageUrl;
 
     @Column(name = "local_path", length = 500)
     private String localPath;

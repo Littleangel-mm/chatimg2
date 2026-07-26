@@ -4,6 +4,7 @@ import api from '../api'
 import { getImageUrl } from '../api'
 
 const STORAGE_PREFIX = 'conversations_'
+const STORAGE_VERSION = 2
 const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
 const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
@@ -34,9 +35,10 @@ function recordIdEquals(a, b) {
 
 function resolveRecordStatus(record) {
   const status = (record?.status || '').toLowerCase()
-  if (record?.imagePath) return 'completed'
+  if (record?.imagePath || record?.imageUrl) return 'completed'
+  if (status === 'completed') return 'processing'
   if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
-  if (status === 'completed' || status === 'failed') return status
+  if (status === 'failed') return status
   return status || 'processing'
 }
 
@@ -100,6 +102,7 @@ function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
   return !recordIdEquals(msg.recordId || current.id, record.id) ||
     resolveRecordStatus(msg.record || { status: msg.status }) !== nextStatus ||
     (current.imagePath || '') !== (record.imagePath || '') ||
+    (current.remoteImageUrl || '') !== (record.remoteImageUrl || '') ||
     (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
     (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
@@ -159,6 +162,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   let remoteLoading = false
   let remoteSyncing = false
   let pendingRemoteSync = false
+  const pendingDeleteRequests = new Map()
 
   const activeConversation = computed(() =>
     conversations.value.find(c => c.id === activeId.value) ?? null
@@ -169,14 +173,18 @@ export const useConversationsStore = defineStore('conversations', () => {
   )
 
   function persist() {
-    if (boundKeyCode.value) {
-      writeStored(boundKeyCode.value, {
-        conversations: conversations.value,
-        activeId: activeId.value,
-        deletedConversationIds: [...deletedConversationIds.value]
-      })
-    }
+    persistLocal()
     scheduleRemoteSync()
+  }
+
+  function persistLocal() {
+    if (!boundKeyCode.value) return
+    writeStored(boundKeyCode.value, {
+      version: STORAGE_VERSION,
+      conversations: conversations.value,
+      activeId: activeId.value,
+      deletedConversationIds: [...deletedConversationIds.value]
+    })
   }
 
   function bindKeyCode(keyCode) {
@@ -186,16 +194,20 @@ export const useConversationsStore = defineStore('conversations', () => {
     const stored = readStored(normalized)
     conversations.value = stored?.conversations ?? []
     activeId.value = stored?.activeId ?? conversations.value[0]?.id ?? null
-    deletedConversationIds.value = new Set(stored?.deletedConversationIds ?? [])
+    deletedConversationIds.value = new Set(
+      stored?.version === STORAGE_VERSION ? (stored.deletedConversationIds ?? []) : []
+    )
   }
 
-  function clearAll() {
-    for (const conv of conversations.value) {
-      if (conv.id) deletedConversationIds.value.add(conv.id)
-    }
+  function resetSession() {
+    clearTimeout(remoteSyncTimer)
+    remoteSyncTimer = null
+    pendingRemoteSync = false
     conversations.value = []
     activeId.value = null
-    persist()
+    boundKeyCode.value = ''
+    pendingPrompt.value = ''
+    deletedConversationIds.value = new Set()
   }
 
   function toRemotePayload() {
@@ -285,11 +297,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!remoteConversations.length) {
       conversations.value = []
       activeId.value = null
-      writeStored(boundKeyCode.value, {
-        conversations: conversations.value,
-        activeId: activeId.value,
-        deletedConversationIds: [...deletedConversationIds.value]
-      })
+      persistLocal()
       return true
     }
 
@@ -323,11 +331,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       : conversations.value.some(conv => conv.id === payload.activeId)
         ? payload.activeId
         : conversations.value[0]?.id || null
-    writeStored(boundKeyCode.value, {
-      conversations: conversations.value,
-      activeId: activeId.value,
-      deletedConversationIds: [...deletedConversationIds.value]
-    })
+    persistLocal()
     if (filteredDeleted) {
       scheduleRemoteSync()
     }
@@ -356,16 +360,14 @@ export const useConversationsStore = defineStore('conversations', () => {
     pendingRemoteSync = false
     remoteSyncing = true
     try {
-      const { data } = await api.post('/chat/sync', toRemotePayload())
-      if (data.code === 200 && deletedConversationIds.value.size) {
-        deletedConversationIds.value = new Set()
-        if (boundKeyCode.value) {
-          writeStored(boundKeyCode.value, {
-            conversations: conversations.value,
-            activeId: activeId.value,
-            deletedConversationIds: []
-          })
-        }
+      const payload = toRemotePayload()
+      const sentDeletedIds = new Set(payload.deletedClientIds)
+      const { data } = await api.post('/chat/sync', payload)
+      if (data.code === 200 && sentDeletedIds.size) {
+        const remaining = new Set(deletedConversationIds.value)
+        for (const id of sentDeletedIds) remaining.delete(id)
+        deletedConversationIds.value = remaining
+        persistLocal()
       }
       return data.code === 200
     } catch (error) {
@@ -446,6 +448,44 @@ export const useConversationsStore = defineStore('conversations', () => {
       activeId.value = conversations.value[0]?.id ?? null
     }
     persist()
+    deleteRemote(id).catch(() => false)
+  }
+
+  function deleteRemote(id) {
+    if (!id || !hasAuthToken()) return Promise.resolve(false)
+    if (pendingDeleteRequests.has(id)) return pendingDeleteRequests.get(id)
+
+    const request = api.delete(`/chat/conversations/${encodeURIComponent(id)}`)
+      .then(({ data }) => {
+        if (data.code !== 200) return false
+        const remaining = new Set(deletedConversationIds.value)
+        remaining.delete(id)
+        deletedConversationIds.value = remaining
+        persistLocal()
+        return true
+      })
+      .catch(error => {
+        console.warn('Chat delete failed', error)
+        return false
+      })
+      .finally(() => pendingDeleteRequests.delete(id))
+
+    pendingDeleteRequests.set(id, request)
+    return request
+  }
+
+  async function flushPendingDeletes() {
+    if (!hasAuthToken()) return deletedConversationIds.value.size === 0
+    if (pendingDeleteRequests.size) {
+      await Promise.allSettled([...pendingDeleteRequests.values()])
+    }
+    for (const id of [...deletedConversationIds.value]) {
+      await deleteRemote(id)
+    }
+    if (deletedConversationIds.value.size) {
+      await syncRemote().catch(() => false)
+    }
+    return deletedConversationIds.value.size === 0
   }
 
   function ensureActive(type = 'text2img') {
@@ -628,7 +668,8 @@ export const useConversationsStore = defineStore('conversations', () => {
 
         const nextStatus = resolveRecordStatus(latest)
         const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
-        const imageChanged = latest.imagePath !== msg.record?.imagePath
+        const imageChanged = latest.imagePath !== msg.record?.imagePath ||
+          latest.remoteImageUrl !== msg.record?.remoteImageUrl
         const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
         if (nextStatus !== prevStatus || imageChanged || sourceMissing) {
           msg.recordId = latest.id
@@ -659,7 +700,7 @@ export const useConversationsStore = defineStore('conversations', () => {
             record?.id != null &&
             canRecoverRecordForMessage(record, conv, msg, userMsg) &&
             resolveRecordStatus(record) === 'completed' &&
-            !!record.imagePath
+            !!(record.imagePath || record.imageUrl)
           )
           .sort((a, b) =>
             Math.abs(recordCreatedTime(a) - msg.createdAt) -
@@ -761,12 +802,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     activeConversation,
     sortedConversations,
     bindKeyCode,
-    clearAll,
+    resetSession,
     createConversation,
     selectConversation,
     renameConversation,
     setConversationType,
     deleteConversation,
+    flushPendingDeletes,
     ensureActive,
     addExchange,
     syncRecord,

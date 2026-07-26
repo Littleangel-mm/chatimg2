@@ -30,6 +30,7 @@ public final class DatabaseMigration {
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_id INTEGER");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS user_email VARCHAR(120)");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS client_message_id VARCHAR(120)");
+            stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS remote_image_url TEXT");
             stmt.execute("UPDATE generation_records SET status = 'completed' WHERE image_url IS NOT NULL AND (status IS NULL OR status = 'processing')");
             stmt.execute("UPDATE generation_records SET status = 'processing' WHERE image_url IS NULL AND (status IS NULL OR status = '')");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS task_code VARCHAR(32)");

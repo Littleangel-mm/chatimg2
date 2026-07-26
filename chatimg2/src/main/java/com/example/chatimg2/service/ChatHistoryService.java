@@ -114,6 +114,26 @@ public class ChatHistoryService {
         return response;
     }
 
+    @Transactional
+    public void softDelete(UserAccount user, String clientId) {
+        String normalized = normalizedClientId(clientId);
+        if (normalized == null) {
+            return;
+        }
+        conversationRepository.findByUserIdAndClientId(user.getId(), normalized)
+                .ifPresent(conversation -> {
+                    if (conversation.getDeletedAt() != null) {
+                        return;
+                    }
+                    LocalDateTime now = LocalDateTime.now();
+                    conversation.setDeletedAt(now);
+                    conversation.setUpdatedAt(now);
+                    conversationRepository.save(conversation);
+                    log.info("Chat conversation soft deleted: user={}, clientId={}",
+                            user.getEmail(), normalized);
+                });
+    }
+
     private ChatConversationDto toDto(ChatConversation conversation, List<ChatMessage> messages) {
         ChatConversationDto dto = new ChatConversationDto();
         dto.setClientId(conversation.getClientId());

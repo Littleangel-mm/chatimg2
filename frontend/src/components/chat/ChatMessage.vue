@@ -15,7 +15,7 @@ const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
 const messageStatus = computed(() => {
-  if (props.message.record?.imagePath) return 'completed'
+  if (props.message.record?.imagePath || props.message.record?.imageUrl) return 'completed'
   return (props.message.record?.status || props.message.status || '').toLowerCase()
 })
 const isProcessing = computed(() => {

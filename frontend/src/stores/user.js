@@ -20,9 +20,10 @@ function normalizeStatus(status) {
 
 function resolveRecordStatus(record) {
   const status = normalizeStatus(record?.status)
-  if (record?.imagePath) return 'completed'
+  if (record?.imagePath || record?.imageUrl) return 'completed'
+  if (status === 'completed') return 'processing'
   if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
-  if (status === 'completed' || status === 'failed') return status
+  if (status === 'failed') return status
   return status || 'processing'
 }
 
@@ -459,7 +460,7 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('keyCode')
     localStorage.removeItem(CACHE_KEY)
     try {
-      useConversationsStore().clearAll()
+      useConversationsStore().resetSession()
     } catch {
       /* ignore */
     }

@@ -105,13 +105,16 @@ public class GenerationRecordService {
             com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
                 com.example.chatimg2.entity.GenerationRecord record = recordRepository.findById(recordId)
                         .orElseThrow(() -> new RuntimeException("记录不存在"));
-                if ("completed".equals(record.getStatus())) {
+                if ("completed".equals(record.getStatus())
+                        && record.getImagePath() != null
+                        && !record.getImagePath().isBlank()) {
                     return record;
                 }
                 if ("failed".equals(record.getStatus())) {
                     rechargeRefundedCredits(record);
                 }
                 record.setImagePath(imagePath);
+                record.setRemoteImageUrl(null);
                 record.setLocalPath(null);
                 record.setStatus("completed");
                 record.setErrorMessage(null);
@@ -270,4 +273,5 @@ public class GenerationRecordService {
         String value = clientMessageId.trim();
         return value.length() > 120 ? value.substring(0, 120) : value;
     }
+
 }
