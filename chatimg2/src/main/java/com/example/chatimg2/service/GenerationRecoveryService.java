@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -22,7 +23,7 @@ public class GenerationRecoveryService {
     private final GenerationRecordService recordService;
     private final GenerationRecordRepository recordRepository;
 
-    @Value("${app.generation.recovery.enabled:false}")
+    @Value("${app.generation.recovery.enabled:true}")
     private boolean enabled;
 
     @Value("${app.generation.recovery.stale-after-ms:900000}")
@@ -52,14 +53,14 @@ public class GenerationRecoveryService {
         if (!enabled || staleAfterMs <= 0) {
             return;
         }
-        boolean locked;
+        Optional<DistributedLockService.LockToken> lock;
         try {
-            locked = distributedLockService.acquire(RECOVERY_LOCK, Duration.ofMillis(lockTtlMs));
+            lock = distributedLockService.tryAcquire(RECOVERY_LOCK, Duration.ofMillis(lockTtlMs));
         } catch (Exception e) {
             log.warn("Skip stale generation recovery because recovery lock failed", e);
             return;
         }
-        if (!locked) {
+        if (lock.isEmpty()) {
             return;
         }
         try {
@@ -69,23 +70,24 @@ public class GenerationRecoveryService {
                 log.warn("Recovered stale generation tasks: count={}, trigger={}, cutoff={}", recovered, trigger, cutoff);
             }
         } finally {
-            distributedLockService.release(RECOVERY_LOCK);
+            distributedLockService.release(lock.orElse(null));
         }
     }
 
     private int recoverRecords(LocalDateTime cutoff) {
         int recovered = 0;
         for (GenerationRecord record : recordRepository
-                .findTop50ByStatusAndImagePathIsNullAndCreatedAtBeforeOrderByCreatedAtAsc("processing", cutoff)) {
+                .findTop50ByStatusAndImagePathIsNullAndCreatedAtBeforeOrderByCreatedAtAsc(
+                        GenerationState.PROCESSING, cutoff)) {
             String recordLock = "generation:record:" + record.getId();
-            boolean locked;
+            Optional<DistributedLockService.LockToken> lock;
             try {
-                locked = distributedLockService.acquire(recordLock, Duration.ofMillis(lockTtlMs));
+                lock = distributedLockService.tryAcquire(recordLock, Duration.ofMillis(lockTtlMs));
             } catch (Exception e) {
                 log.warn("Skip stale generation record because record lock failed: recordId={}", record.getId(), e);
                 continue;
             }
-            if (!locked) {
+            if (lock.isEmpty()) {
                 continue;
             }
             try {
@@ -95,8 +97,10 @@ public class GenerationRecoveryService {
                     recordService.markFailed(record.getId(), record.getKeyId(), STALE_TASK_MESSAGE);
                 }
                 recovered++;
+            } catch (Exception e) {
+                log.error("Failed to recover stale generation: recordId={}", record.getId(), e);
             } finally {
-                distributedLockService.release(recordLock);
+                distributedLockService.release(lock.orElse(null));
             }
         }
         return recovered;

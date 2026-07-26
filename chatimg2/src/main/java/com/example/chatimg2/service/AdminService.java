@@ -5,9 +5,6 @@ import com.example.chatimg2.repository.AdminRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Optional;
 
 @Service
@@ -15,25 +12,21 @@ import java.util.Optional;
 public class AdminService {
 
     private final AdminRepository adminRepository;
+    private final PasswordService passwordService;
 
     public Optional<Admin> login(String username, String password) {
-        String hashedPassword = sha256(password);
-        return adminRepository.findByUsernameAndPassword(username, hashedPassword);
-    }
-
-    private String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 algorithm not available", e);
+        if (username == null || username.isBlank() || password == null || password.isBlank()) {
+            return Optional.empty();
         }
+        Optional<Admin> admin = adminRepository.findByUsername(username.trim());
+        if (admin.isEmpty() || !passwordService.matchesAdmin(password, admin.get().getPassword())) {
+            return Optional.empty();
+        }
+        if (passwordService.needsUpgrade(admin.get().getPassword())
+                && passwordService.isBcryptLengthSupported(password)) {
+            admin.get().setPassword(passwordService.encode(password));
+            adminRepository.save(admin.get());
+        }
+        return admin;
     }
 }

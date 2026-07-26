@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const userStore = useUserStore()
 
 const email = ref('')
 const password = ref('')
@@ -35,6 +37,7 @@ async function submit() {
   }
   try {
     await authStore.register(email.value.trim(), password.value, code.value.trim())
+    userStore.logout()
     router.push('/')
   } catch (e) {
     error.value = e.response?.data?.message || e.message || '注册失败'

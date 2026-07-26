@@ -77,7 +77,6 @@ public class UserController {
                         request.getPrompt(),
                         request.getType(),
                         request.getSourceImage(),
-                        request.getModel(),
                         request.getClientMessageId());
             } else {
                 if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
@@ -88,7 +87,6 @@ public class UserController {
                         request.getPrompt(),
                         request.getType(),
                         request.getSourceImage(),
-                        request.getModel(),
                         request.getClientMessageId());
             }
             return ApiResponse.success("任务已提交，正在生成中", record);
@@ -130,7 +128,7 @@ public class UserController {
                 imageGenerationService.retryRemoteImageBackupForUser(principal.get().user(), recordId);
             } else {
                 if (keyCode == null || keyCode.isBlank()) {
-                    return ApiResponse.error(401, "Authentication required");
+                    return ApiResponse.error(401, "请先登录或激活密钥");
                 }
                 imageGenerationService.retryRemoteImageBackup(keyCode, recordId);
             }
@@ -147,23 +145,27 @@ public class UserController {
             @RequestParam(required = false) String keyCode,
             HttpServletRequest servletRequest) {
         try {
-            byte[] imageBytes = image.getBytes();
+            if (image.isEmpty() || image.getSize() > 20L * 1024 * 1024) {
+                return ApiResponse.error(400, "图片为空或超过 20MB");
+            }
             Optional<AuthPrincipal> principal = authService.current(servletRequest);
             if (principal.isPresent() && principal.get().isUser()) {
+                imageGenerationService.getRecordStatusForUser(principal.get().user(), recordId);
                 imageGenerationService.saveBrowserImageBackupForUser(
-                        principal.get().user(), recordId, imageBytes);
+                        principal.get().user(), recordId, image.getBytes());
             } else {
                 if (keyCode == null || keyCode.isBlank()) {
-                    return ApiResponse.error(401, "Authentication required");
+                    return ApiResponse.error(401, "请先登录或激活密钥");
                 }
-                imageGenerationService.saveBrowserImageBackup(keyCode, recordId, imageBytes);
+                imageGenerationService.getRecordStatus(keyCode, recordId);
+                imageGenerationService.saveBrowserImageBackup(keyCode, recordId, image.getBytes());
             }
             return ApiResponse.success(null);
         } catch (RuntimeException e) {
             return requestError(e);
         } catch (java.io.IOException e) {
             log.warn("Read browser image backup failed: recordId={}", recordId, e);
-            return ApiResponse.error(400, "Invalid image upload");
+            return ApiResponse.error(400, "图片上传内容无效");
         }
     }
 

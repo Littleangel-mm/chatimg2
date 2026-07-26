@@ -394,8 +394,6 @@ public class InspirationCrawlerService {
         }
         synchronized (this) {
             if (httpClient == null) {
-                System.setProperty("java.net.useSystemProxies", "true");
-                System.setProperty("java.net.preferIPv4Stack", "true");
                 Proxy effectiveProxy = resolveEffectiveProxy();
                 ProxySelector proxySelector = ProxySelector.getDefault();
                 OkHttpClient.Builder builder = new OkHttpClient.Builder()

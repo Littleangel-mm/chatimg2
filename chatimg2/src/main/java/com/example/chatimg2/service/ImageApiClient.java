@@ -104,6 +104,7 @@ public class ImageApiClient {
     }
 
     public String textToImage(String prompt, String requestedModel, List<String> fallbacks) {
+        validateConfiguration();
         ApiCallException lastError = null;
         List<String> models = buildText2imgModels(requestedModel, fallbacks);
         if (models.isEmpty()) {
@@ -159,16 +160,9 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的文生图模型");
     }
 
-    public String imageEdit(String prompt, byte[] imageBytes, String model) {
-        return imageEdit(prompt, imageBytes, "image/png", "source.png", model, List.of());
-    }
-
-    public String imageEdit(String prompt, byte[] imageBytes, String requestedModel, List<String> fallbacks) {
-        return imageEdit(prompt, imageBytes, "image/png", "source.png", requestedModel, fallbacks);
-    }
-
     public String imageEdit(String prompt, byte[] imageBytes, String imageMediaType, String fileName,
                             String requestedModel, List<String> fallbacks) {
+        validateConfiguration();
         ApiCallException lastError = null;
         List<String> models = buildImageEditModels(requestedModel, fallbacks);
         if (models.isEmpty()) {
@@ -318,15 +312,18 @@ public class ImageApiClient {
                     ApiCallException error = createResponseException(response.code(), responseBody);
                     lastError = error;
                     if (error.isRetryable() && attempt < attempts) {
-                        log.warn("API submit failed transiently, retry {}/{} after HTTP {}: {}",
-                                attempt, attempts, response.code(), truncate(responseBody, 300));
+                        log.warn("Image API transient failure, retry {}/{}: status={}, type={}, code={}",
+                                attempt, attempts, response.code(),
+                                error.getApiErrorType(), error.getApiErrorCode());
                         sleepBeforeSubmitRetry();
                         continue;
                     }
-                    log.error("API call failed: {} - {}", response.code(), responseBody);
+                    log.error("Image API rejected request: status={}, type={}, code={}, retryable={}",
+                            response.code(), error.getApiErrorType(), error.getApiErrorCode(), error.isRetryable());
                     throw error;
                 }
-                log.debug("API submit response: {}", truncate(responseBody, 500));
+                log.debug("Image API submit succeeded: status={}, responseBytes={}",
+                        response.code(), responseBody.length());
                 JsonNode root;
                 try {
                     root = objectMapper.readTree(responseBody);
@@ -337,8 +334,8 @@ public class ImageApiClient {
                             "生图服务返回异常，请稍后重试", e);
                     lastError = error;
                     if (attempt < attempts) {
-                        log.warn("API returned invalid JSON, retry {}/{}: {}",
-                                attempt, attempts, truncate(responseBody, 300));
+                        log.warn("Image API returned invalid JSON, retry {}/{}: responseBytes={}",
+                                attempt, attempts, responseBody.length());
                         sleepBeforeSubmitRetry();
                         continue;
                     }
@@ -421,8 +418,8 @@ public class ImageApiClient {
                     if (!error.isRetryable()) {
                         throw error;
                     }
-                    log.warn("Poll task {} attempt {} transient HTTP {}: {}",
-                            taskId, attempt, response.code(), truncate(body, 300));
+                    log.warn("Poll task {} attempt {} transient failure: status={}, type={}, code={}",
+                            taskId, attempt, response.code(), error.getApiErrorType(), error.getApiErrorCode());
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
@@ -431,8 +428,8 @@ public class ImageApiClient {
                 try {
                     root = objectMapper.readTree(body);
                 } catch (JsonProcessingException e) {
-                    log.warn("Poll task {} attempt {} returned invalid JSON: {}",
-                            taskId, attempt, truncate(body, 300));
+                    log.warn("Poll task {} attempt {} returned invalid JSON: responseBytes={}",
+                            taskId, attempt, body.length());
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
@@ -639,6 +636,15 @@ public class ImageApiClient {
             return "https://www.maitokens.com";
         }
         return value.trim();
+    }
+
+    private void validateConfiguration() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new BusinessException("IMAGE_API_KEY_MISSING", "生图服务尚未配置 API 密钥");
+        }
+        if (apiUrl == null || apiUrl.isBlank()) {
+            throw new BusinessException("IMAGE_API_URL_MISSING", "生图服务尚未配置 API 地址");
+        }
     }
 
     private void sleepQuietly(long millis) {

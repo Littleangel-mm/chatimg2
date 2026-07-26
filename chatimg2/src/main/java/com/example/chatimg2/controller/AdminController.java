@@ -15,6 +15,7 @@ import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.AdminService;
 import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
+import com.example.chatimg2.service.PasswordService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class AdminController {
     private final AuthService authService;
     private final UserAccountRepository userRepository;
     private final ImageGenerationService imageGenerationService;
+    private final PasswordService passwordService;
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -88,7 +90,7 @@ public class AdminController {
         UserAccount user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
         String tempPassword = generateTempPassword();
-        user.setPasswordHash(authService.sha256(user.getEmail() + ":" + tempPassword));
+        user.setPasswordHash(passwordService.encode(tempPassword));
         userRepository.save(user);
         return ApiResponse.success("密码已重置", new ResetPasswordResponse(
                 user.getId(),

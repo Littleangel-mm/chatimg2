@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { normalizeImageUrl, requestImageBackup } from '../../api'
+import { extractPolicyAdvice, resolveGenerationStatus } from '../../utils/generation'
 import ImageLightbox from '../ImageLightbox.vue'
 
 const props = defineProps({
@@ -9,16 +10,10 @@ const props = defineProps({
 })
 
 const convStore = useConversationsStore()
-const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
-const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
-
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
 const messageStatus = computed(() => {
-  if (props.message.record?.imagePath || props.message.record?.imageUrl || props.message.record?.remoteImageAvailable) {
-    return 'completed'
-  }
-  return (props.message.record?.status || props.message.status || '').toLowerCase()
+  return resolveGenerationStatus(props.message.record || { status: props.message.status })
 })
 const isProcessing = computed(() => {
   const status = messageStatus.value
@@ -47,18 +42,6 @@ function requestLocalBackup() {
   })
 }
 
-function extractPolicyAdvice(text) {
-  if (!text) return ''
-  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
-  if (markerIndex >= 0) {
-    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
-  }
-  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
-  if (legacyIndex >= 0) {
-    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
-  }
-  return ''
-}
 </script>
 
 <template>

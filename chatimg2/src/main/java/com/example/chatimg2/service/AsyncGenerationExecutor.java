@@ -5,14 +5,15 @@ import com.example.chatimg2.exception.ApiCallException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -29,24 +30,24 @@ public class AsyncGenerationExecutor {
     @Value("${app.generation.lock.ttl-ms:1800000}")
     private long generationLockTtlMs;
 
-    private static final String TEXT2IMG_MODEL = "gpt-image-2";
-    private static final String IMG2IMG_MODEL = "gpt-image-2";
+    @Value("${app.api.model.text2img:gpt-image-2}")
+    private String text2imgModel;
+
+    @Value("${app.api.model.img2img:gpt-image-2}")
+    private String img2imgModel;
+
     private static final String CONTENT_POLICY_ADVICE_PREFIX = "CONTENT_POLICY_ADVICE:";
     private static final String IMG2IMG_USER_ERROR = "生成失败，请更换图片重试";
     private static final String TEXT2IMG_USER_ERROR = "生成失败，请稍后重试";
 
     @Async("generationExecutor")
-    public void runGeneration(Integer recordId, String taskCode, Integer keyId, String prompt,
-                              String generationType, String sourceImagePath, String model) {
-        runGeneration(recordId, taskCode, keyId, null, prompt, generationType, sourceImagePath, model, null);
-    }
-
-    @Async("generationExecutor")
     public void runGeneration(Integer recordId, String taskCode, Integer keyId, Integer userId, String prompt,
-                              String generationType, String sourceImagePath, String model, String ownerFolder) {
+                              String generationType, String sourceImagePath, String ownerFolder) {
         String lockKey = "generation:record:" + recordId;
+        Optional<DistributedLockService.LockToken> lock;
         try {
-            if (!distributedLockService.acquire(lockKey, Duration.ofMillis(generationLockTtlMs))) {
+            lock = distributedLockService.tryAcquire(lockKey, Duration.ofMillis(generationLockTtlMs));
+            if (lock.isEmpty()) {
                 log.warn("Async generation skipped because lock is held: recordId={}, taskCode={}", recordId, taskCode);
                 return;
             }
@@ -63,7 +64,7 @@ public class AsyncGenerationExecutor {
             log.error("Async generation failed: recordId={}, taskCode={}", recordId, taskCode, e);
             markGenerationFailed(recordId, keyId, userId, generationType, e);
         } finally {
-            distributedLockService.release(lockKey);
+            distributedLockService.release(lock.orElse(null));
         }
     }
 
@@ -73,30 +74,30 @@ public class AsyncGenerationExecutor {
         if ("img2img".equals(generationType)) {
             Path sourcePath = resolveSourcePath(sourceImagePath);
             byte[] imageBytes = Files.readAllBytes(sourcePath);
-            String mediaType = detectImageMediaType(sourcePath, imageBytes);
+            String mediaType = ImageContentSupport.detectMediaType(sourcePath, imageBytes);
             imageUrl = imageApiClient.imageEdit(
                     prompt,
                     imageBytes,
                     mediaType,
                     sourcePath.getFileName().toString(),
-                    IMG2IMG_MODEL,
+                    img2imgModel,
                     List.of());
         } else {
-            imageUrl = imageApiClient.textToImage(prompt, TEXT2IMG_MODEL, List.of());
+            imageUrl = imageApiClient.textToImage(prompt, text2imgModel, List.of());
         }
 
         if (isRemoteUrl(imageUrl)) {
-            recordService.markRemoteImageAvailable(recordId, imageUrl);
-            try {
-                imageResultDeliveryService.retrySavedRemoteImage(recordId);
-            } catch (Exception e) {
-                log.warn("Generated image is available remotely but local backup could not be queued: "
-                                + "recordId={}, taskCode={}, reason={}",
-                        recordId, taskCode, e.getMessage());
+            if (recordService.markRemoteImageAvailable(recordId, imageUrl)) {
+                try {
+                    imageResultDeliveryService.retrySavedRemoteImage(recordId);
+                } catch (TaskRejectedException e) {
+                    log.warn("Image backup queue is full; remote result remains available: recordId={}, taskCode={}",
+                            recordId, taskCode);
+                }
             }
         } else {
             ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
-            recordService.markCompleted(recordId, backup.imagePath());
+            recordService.markLocalImageAvailable(recordId, backup.imagePath());
         }
         log.info("Async generation completed: recordId={}, taskCode={}, elapsedMs={}",
                 recordId, taskCode, System.currentTimeMillis() - startedAt);
@@ -108,10 +109,14 @@ public class AsyncGenerationExecutor {
 
     private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType, Throwable error) {
         String userMessage = resolveUserMessage(generationType, error);
-        if (userId != null) {
-            recordService.markFailedForUser(recordId, userId, userMessage);
-        } else {
-            recordService.markFailed(recordId, keyId, userMessage);
+        try {
+            if (userId != null) {
+                recordService.markFailedForUser(recordId, userId, userMessage);
+            } else {
+                recordService.markFailed(recordId, keyId, userMessage);
+            }
+        } catch (Exception persistenceError) {
+            log.error("Failed to persist generation failure: recordId={}", recordId, persistenceError);
         }
     }
 
@@ -165,51 +170,6 @@ public class AsyncGenerationExecutor {
     }
 
     private Path resolveSourcePath(String sourceImagePath) {
-        Path path = Paths.get(sourceImagePath);
-        if (path.isAbsolute()) {
-            return path;
-        }
-        return storageConfig.getBackupDir().resolve(sourceImagePath).normalize();
-    }
-
-    private String detectImageMediaType(Path path, byte[] bytes) {
-        String byMagic = detectImageMediaType(bytes);
-        if (byMagic != null) {
-            return byMagic;
-        }
-        try {
-            String probed = Files.probeContentType(path);
-            if (probed != null && probed.startsWith("image/")) {
-                return probed;
-            }
-        } catch (Exception ignored) {
-        }
-        return "image/png";
-    }
-
-    private String detectImageMediaType(byte[] bytes) {
-        if (bytes == null || bytes.length < 12) {
-            return null;
-        }
-        if ((bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8) {
-            return "image/jpeg";
-        }
-        if ((bytes[0] & 0xff) == 0x89
-                && bytes[1] == 0x50
-                && bytes[2] == 0x4e
-                && bytes[3] == 0x47) {
-            return "image/png";
-        }
-        if (bytes[0] == 'R'
-                && bytes[1] == 'I'
-                && bytes[2] == 'F'
-                && bytes[3] == 'F'
-                && bytes[8] == 'W'
-                && bytes[9] == 'E'
-                && bytes[10] == 'B'
-                && bytes[11] == 'P') {
-            return "image/webp";
-        }
-        return null;
+        return storageConfig.resolveSourceImageFile(sourceImagePath);
     }
 }

@@ -236,8 +236,7 @@ async function send() {
   const exchange = convStore.addExchange(conv.id, {
     prompt: text,
     sourceImage: isImg2img ? sourceBase64.value : null,
-    type: isImg2img ? 'img2img' : 'text2img',
-    model: model.value
+    type: isImg2img ? 'img2img' : 'text2img'
   })
 
   prompt.value = ''
@@ -248,7 +247,6 @@ async function send() {
     const record = await userStore.generate({
       prompt: text,
       type: isImg2img ? 'img2img' : 'text2img',
-      model: model.value,
       sourceImage: isImg2img ? sourceBase64.value : undefined,
       clientMessageId: exchange?.assistantMsg?.id
     })
@@ -294,9 +292,7 @@ function applyPendingPrompt() {
 onMounted(() => {
   applyPendingPrompt()
   if (userStore.isActivated) {
-    userStore.fetchHistory().catch(() => {
-      userStore.resumePendingGenerations().catch(() => {})
-    })
+    userStore.fetchHistory().catch(() => {})
   }
 })
 onActivated(applyPendingPrompt)

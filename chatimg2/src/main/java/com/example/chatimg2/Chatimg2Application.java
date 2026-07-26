@@ -13,15 +13,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class Chatimg2Application {
 
     public static void main(String[] args) {
-        enableSystemNetworkSettings();
         loadEnv();
         DatabaseMigration.run();
         SpringApplication.run(Chatimg2Application.class, args);
-    }
-
-    private static void enableSystemNetworkSettings() {
-        System.setProperty("java.net.useSystemProxies", "true");
-        System.setProperty("java.net.preferIPv4Stack", "true");
     }
 
     private static void loadEnv() {

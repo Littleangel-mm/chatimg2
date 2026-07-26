@@ -44,9 +44,6 @@ public class GenerationRecord {
         return remoteImageUrl != null && !remoteImageUrl.isBlank();
     }
 
-    @Column(name = "local_path", length = 500)
-    private String localPath;
-
     @Column(name = "generation_type", length = 20)
     private String generationType = "text2img";
 

@@ -81,7 +81,7 @@ public class EmailCodeService {
         }
 
         EmailVerificationCode entity = codeRepository
-                .findTopByEmailAndSceneAndUsedFalseOrderByCreatedAtDesc(normalized, normalizedScene)
+                .findLatestUnusedForUpdate(normalized, normalizedScene)
                 .orElseThrow(() -> new RuntimeException("验证码不存在或已过期"));
 
         if (entity.getExpiresAt().isBefore(LocalDateTime.now())) {

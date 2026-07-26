@@ -9,6 +9,11 @@ public class ChatMessageDto {
     private String content;
     private String sourceImage;
     private Integer recordId;
+    private String recordImagePath;
+    private String recordSourceImagePath;
+    private Boolean recordRemoteImageAvailable;
+    private String recordTaskCode;
+    private String recordGenerationType;
     private String status;
     private String errorMessage;
     private Long createdAt;

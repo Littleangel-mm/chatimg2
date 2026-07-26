@@ -16,11 +16,11 @@ public final class DatabaseMigration {
     }
 
     public static void run() {
-        String host = env("DB_HOST", "47.108.211.186");
+        String host = env("DB_HOST", "localhost");
         String port = env("DB_PORT", "5432");
         String dbName = env("DB_NAME", "chatimg2");
-        String user = env("DB_USER", "root");
-        String password = env("DB_PASSWORD", "fl3692458121");
+        String user = env("DB_USER", "postgres");
+        String password = env("DB_PASSWORD", "");
         String url = "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
 
         try (Connection conn = DriverManager.getConnection(url, user, password);

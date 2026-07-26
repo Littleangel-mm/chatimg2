@@ -6,9 +6,12 @@ import com.example.chatimg2.dto.ChatSyncRequest;
 import com.example.chatimg2.dto.ChatSyncResponse;
 import com.example.chatimg2.entity.ChatConversation;
 import com.example.chatimg2.entity.ChatMessage;
+import com.example.chatimg2.entity.GenerationRecord;
 import com.example.chatimg2.entity.UserAccount;
 import com.example.chatimg2.repository.ChatConversationRepository;
 import com.example.chatimg2.repository.ChatMessageRepository;
+import com.example.chatimg2.repository.GenerationRecordRepository;
+import com.example.chatimg2.repository.UserAccountRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,7 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -31,24 +33,65 @@ import java.util.Set;
 @Slf4j
 public class ChatHistoryService {
 
+    private static final int MAX_MESSAGE_CHARS = 20_000;
+    private static final long MAX_CLOCK_SKEW_MILLIS = 5 * 60 * 1000L;
+
     private final ChatConversationRepository conversationRepository;
     private final ChatMessageRepository messageRepository;
+    private final GenerationRecordRepository generationRecordRepository;
+    private final UserAccountRepository userRepository;
     private final AuthService authService;
+    private final GenerationRecordViewService recordViewService;
 
     @Transactional(readOnly = true)
     public ChatSyncResponse load(UserAccount user) {
-        List<ChatConversation> conversations = conversationRepository.findTop100ByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(user.getId());
+        List<ChatConversation> conversations = conversationRepository
+                .findByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(user.getId());
         List<Integer> ids = conversations.stream().map(ChatConversation::getId).toList();
         Map<Integer, List<ChatMessage>> messagesByConversation = new HashMap<>();
+        Map<Integer, GenerationRecord> generationRecords = new HashMap<>();
+        Map<String, GenerationRecord> generationRecordsByClientMessage = new HashMap<>();
         if (!ids.isEmpty()) {
-            for (ChatMessage message : messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(ids)) {
+            List<ChatMessage> messages = messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(ids);
+            for (ChatMessage message : messages) {
                 messagesByConversation.computeIfAbsent(message.getConversationId(), ignored -> new ArrayList<>()).add(message);
+            }
+            List<Integer> recordIds = messages.stream()
+                    .map(ChatMessage::getGenerationRecordId)
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
+                    .toList();
+            if (!recordIds.isEmpty()) {
+                generationRecordRepository.findAllById(recordIds)
+                        .forEach(record -> generationRecords.put(record.getId(), record));
+            }
+            List<String> assistantClientIds = messages.stream()
+                    .filter(message -> "assistant".equals(message.getRole()))
+                    .filter(message -> message.getGenerationRecordId() == null)
+                    .map(ChatMessage::getClientId)
+                    .filter(java.util.Objects::nonNull)
+                    .filter(clientId -> !clientId.isBlank())
+                    .distinct()
+                    .toList();
+            if (!assistantClientIds.isEmpty()) {
+                generationRecordRepository
+                        .findByUserIdAndClientMessageIdInOrderByCreatedAtDesc(user.getId(), assistantClientIds)
+                        .forEach(record -> generationRecordsByClientMessage
+                                .putIfAbsent(record.getClientMessageId(), record));
             }
         }
 
         ChatSyncResponse response = new ChatSyncResponse();
+        response.setDeletedClientIds(conversationRepository.findDeletedClientIdsByUserId(user.getId()).stream()
+                .filter(clientId -> !clientId.isBlank())
+                .distinct()
+                .toList());
         response.setConversations(conversations.stream()
-                .map(conversation -> toDto(conversation, messagesByConversation.getOrDefault(conversation.getId(), List.of())))
+                .map(conversation -> toDto(
+                        conversation,
+                        messagesByConversation.getOrDefault(conversation.getId(), List.of()),
+                        generationRecords,
+                        generationRecordsByClientMessage))
                 .toList());
         response.setActiveId(response.getConversations().isEmpty() ? null : response.getConversations().get(0).getClientId());
         return response;
@@ -56,16 +99,17 @@ public class ChatHistoryService {
 
     @Transactional
     public ChatSyncResponse sync(UserAccount user, ChatSyncRequest request) {
+        lockUserForWrite(user);
         List<ChatConversationDto> incoming = request.getConversations() == null ? List.of() : request.getConversations();
         int messageCount = incoming.stream()
                 .mapToInt(conversation -> conversation.getMessages() == null ? 0 : conversation.getMessages().size())
                 .sum();
         log.info("Chat sync start: user={}, conversations={}, messages={}",
                 user.getEmail(), incoming.size(), messageCount);
-        Set<String> incomingClientIds = new HashSet<>();
         Set<String> deletedClientIds = normalizedClientIds(request.getDeletedClientIds());
+        Set<String> processedConversationIds = new HashSet<>();
 
-        List<ChatConversation> existing = conversationRepository.findTop200ByUserIdOrderByUpdatedAtDesc(user.getId());
+        List<ChatConversation> existing = conversationRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
         Map<String, ChatConversation> existingByClientId = new HashMap<>();
         for (ChatConversation conversation : existing) {
             if (conversation.getClientId() != null) {
@@ -88,22 +132,27 @@ public class ChatHistoryService {
             if (clientId == null) {
                 continue;
             }
-            if (deletedClientIds.contains(clientId)) {
+            if (deletedClientIds.contains(clientId) || !processedConversationIds.add(clientId)) {
                 continue;
             }
-            incomingClientIds.add(clientId);
-
             ChatConversation conversation = existingByClientId.getOrDefault(clientId, new ChatConversation());
             if (conversation.getDeletedAt() != null) {
                 continue;
             }
+            boolean isNewConversation = conversation.getId() == null;
+            LocalDateTime incomingUpdatedAt = fromMillis(dto.getUpdatedAt());
             conversation.setUserId(user.getId());
             conversation.setUserEmail(authService.normalizeEmail(user.getEmail()));
             conversation.setClientId(clientId);
-            conversation.setTitle(safeTitle(dto.getTitle()));
-            conversation.setConversationType(resolveType(dto.getType()));
-            conversation.setCreatedAt(fromMillis(dto.getCreatedAt()));
-            conversation.setUpdatedAt(fromMillis(dto.getUpdatedAt()));
+            if (isNewConversation || conversation.getCreatedAt() == null) {
+                conversation.setCreatedAt(fromMillis(dto.getCreatedAt()));
+            }
+            if (isNewConversation || conversation.getUpdatedAt() == null
+                    || !incomingUpdatedAt.isBefore(conversation.getUpdatedAt())) {
+                conversation.setTitle(safeTitle(dto.getTitle()));
+                conversation.setConversationType(resolveType(dto.getType()));
+                conversation.setUpdatedAt(incomingUpdatedAt);
+            }
             conversation = conversationRepository.save(conversation);
 
             upsertMessages(conversation.getId(), dto.getMessages());
@@ -120,6 +169,7 @@ public class ChatHistoryService {
         if (normalized == null) {
             return;
         }
+        lockUserForWrite(user);
         conversationRepository.findByUserIdAndClientId(user.getId(), normalized)
                 .ifPresent(conversation -> {
                     if (conversation.getDeletedAt() != null) {
@@ -134,7 +184,9 @@ public class ChatHistoryService {
                 });
     }
 
-    private ChatConversationDto toDto(ChatConversation conversation, List<ChatMessage> messages) {
+    private ChatConversationDto toDto(ChatConversation conversation, List<ChatMessage> messages,
+                                      Map<Integer, GenerationRecord> generationRecords,
+                                      Map<String, GenerationRecord> generationRecordsByClientMessage) {
         ChatConversationDto dto = new ChatConversationDto();
         dto.setClientId(conversation.getClientId());
         dto.setTitle(conversation.getTitle());
@@ -145,21 +197,39 @@ public class ChatHistoryService {
                 .sorted(Comparator
                         .comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(ChatMessage::getId, Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(this::toDto)
+                .map(message -> {
+                    GenerationRecord record = generationRecords.get(message.getGenerationRecordId());
+                    if (record == null && message.getClientId() != null) {
+                        record = generationRecordsByClientMessage.get(message.getClientId());
+                    }
+                    return toDto(message, record);
+                })
                 .toList());
         return dto;
     }
 
-    private ChatMessageDto toDto(ChatMessage message) {
+    private ChatMessageDto toDto(ChatMessage message, GenerationRecord record) {
         ChatMessageDto dto = new ChatMessageDto();
         dto.setClientId(message.getClientId() != null ? message.getClientId() : String.valueOf(message.getId()));
         dto.setRole(message.getRole());
         dto.setContent(message.getContent());
         dto.setSourceImage(message.getImagePath());
-        dto.setRecordId(message.getGenerationRecordId());
-        dto.setStatus(message.getIntent());
-        if ("assistant".equals(message.getRole()) && "failed".equals(message.getIntent())) {
-            dto.setErrorMessage(message.getContent());
+        dto.setRecordId(record != null ? record.getId() : message.getGenerationRecordId());
+        if (record != null) {
+            dto.setRecordImagePath(recordViewService.resolveImagePath(record));
+            dto.setRecordSourceImagePath(record.getSourceImagePath());
+            dto.setRecordRemoteImageAvailable(record.isRemoteImageAvailable());
+            dto.setRecordTaskCode(record.getTaskCode());
+            dto.setRecordGenerationType(record.getGenerationType());
+            dto.setStatus(record.getStatus());
+            if (GenerationState.isFailed(record.getStatus())) {
+                dto.setErrorMessage(record.getErrorMessage());
+            }
+        } else {
+            dto.setStatus(message.getIntent());
+            if ("assistant".equals(message.getRole()) && GenerationState.isFailed(message.getIntent())) {
+                dto.setErrorMessage(message.getContent());
+            }
         }
         dto.setCreatedAt(toMillis(message.getCreatedAt()));
         return dto;
@@ -180,21 +250,41 @@ public class ChatHistoryService {
             }
         }
         List<ChatMessage> messages = new ArrayList<>();
+        Set<String> processedClientIds = new HashSet<>();
         for (ChatMessageDto dto : dtos) {
             String role = resolveRole(dto.getRole());
             if (role == null) {
                 continue;
             }
             String clientId = normalizedClientId(dto.getClientId());
+            if (clientId == null || !processedClientIds.add(clientId)) {
+                continue;
+            }
             ChatMessage message = resolveExistingMessage(clientId, existingByClientId, existingById);
             message.setConversationId(conversationId);
             message.setClientId(clientId);
             message.setRole(role);
-            message.setContent(resolveContent(dto, role));
-            message.setImagePath(safeImagePath(dto.getSourceImage()));
-            message.setGenerationRecordId(dto.getRecordId());
-            message.setIntent(dto.getStatus());
-            message.setCreatedAt(fromMillis(dto.getCreatedAt()));
+            boolean statusRegression = isTerminalStatus(message.getIntent())
+                    && !message.getIntent().equals(dto.getStatus());
+            if (!statusRegression) {
+                String incomingContent = resolveContent(dto, role);
+                if (incomingContent != null && (!incomingContent.isBlank() || message.getContent() == null)) {
+                    message.setContent(incomingContent);
+                }
+                if (dto.getStatus() != null && !dto.getStatus().isBlank()) {
+                    message.setIntent(dto.getStatus());
+                }
+            }
+            String sourceImage = safeImagePath(dto.getSourceImage());
+            if (sourceImage != null || message.getImagePath() == null) {
+                message.setImagePath(sourceImage);
+            }
+            if (message.getGenerationRecordId() == null && dto.getRecordId() != null) {
+                message.setGenerationRecordId(dto.getRecordId());
+            }
+            if (message.getCreatedAt() == null) {
+                message.setCreatedAt(fromMillis(dto.getCreatedAt()));
+            }
             messages.add(message);
         }
         if (!messages.isEmpty()) {
@@ -221,10 +311,20 @@ public class ChatHistoryService {
     }
 
     private String resolveContent(ChatMessageDto dto, String role) {
+        String content;
         if ("assistant".equals(role) && "failed".equals(dto.getStatus()) && dto.getErrorMessage() != null) {
-            return dto.getErrorMessage();
+            content = dto.getErrorMessage();
+        } else {
+            content = dto.getContent();
         }
-        return dto.getContent();
+        if (content == null || content.length() <= MAX_MESSAGE_CHARS) {
+            return content;
+        }
+        return content.substring(0, MAX_MESSAGE_CHARS);
+    }
+
+    private boolean isTerminalStatus(String status) {
+        return GenerationState.isCompleted(status) || GenerationState.isFailed(status);
     }
 
     private String normalizedClientId(String clientId) {
@@ -232,6 +332,14 @@ public class ChatHistoryService {
             return null;
         }
         return clientId.trim();
+    }
+
+    private void lockUserForWrite(UserAccount user) {
+        if (user == null || user.getId() == null) {
+            throw new IllegalArgumentException("User is required for chat synchronization");
+        }
+        userRepository.findByIdForUpdate(user.getId())
+                .orElseThrow(() -> new IllegalArgumentException("User no longer exists"));
     }
 
     private Set<String> normalizedClientIds(List<String> clientIds) {
@@ -271,11 +379,12 @@ public class ChatHistoryService {
         if (imagePath.startsWith("data:")) {
             return null;
         }
-        return imagePath.length() > 500 ? imagePath.substring(0, 500) : imagePath;
+        return imagePath.length() > 500 ? null : imagePath;
     }
 
     private LocalDateTime fromMillis(Long millis) {
-        if (millis == null || millis <= 0) {
+        long now = System.currentTimeMillis();
+        if (millis == null || millis <= 0 || millis > now + MAX_CLOCK_SKEW_MILLIS) {
             return LocalDateTime.now();
         }
         return LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault());

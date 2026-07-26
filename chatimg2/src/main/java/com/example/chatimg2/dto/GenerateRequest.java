@@ -10,8 +10,6 @@ public class GenerateRequest {
     private String type;
     /** base64 encoded source image for img2img */
     private String sourceImage;
-    /** API model name, e.g. gpt-image-1 */
-    private String model;
     /** frontend assistant message id used to bind async generation result */
     private String clientMessageId;
 }
