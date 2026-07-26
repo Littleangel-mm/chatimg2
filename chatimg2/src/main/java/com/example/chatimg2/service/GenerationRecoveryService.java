@@ -1,5 +1,6 @@
 package com.example.chatimg2.service;
 
+import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.GenerationRecord;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,8 @@ public class GenerationRecoveryService {
     private final DistributedLockService distributedLockService;
     private final GenerationRecordService recordService;
     private final GenerationRecordRepository recordRepository;
+    private final ImageStorageConfig storageConfig;
+    private final AuthService authService;
 
     @Value("${app.generation.recovery.enabled:true}")
     private boolean enabled;
@@ -33,11 +36,9 @@ public class GenerationRecoveryService {
     private long lockTtlMs;
 
     private static final String RECOVERY_LOCK = "generation:recovery";
-    private static final String STALE_TASK_MESSAGE =
-            "\u751f\u6210\u4efb\u52a1\u4e2d\u65ad\uff0c\u5df2\u9000\u56de\u79ef\u5206\uff0c\u8bf7\u91cd\u65b0\u751f\u6210";
-
     @EventListener(ApplicationReadyEvent.class)
     public void recoverOnStartup() {
+        reconcileLateLocalImages("startup");
         recoverStaleProcessingTasks("startup");
     }
 
@@ -46,6 +47,7 @@ public class GenerationRecoveryService {
             initialDelayString = "${app.generation.recovery.initial-delay-ms:60000}"
     )
     public void recoverOnSchedule() {
+        reconcileLateLocalImages("scheduled");
         recoverStaleProcessingTasks("scheduled");
     }
 
@@ -92,9 +94,10 @@ public class GenerationRecoveryService {
             }
             try {
                 if (record.getUserId() != null) {
-                    recordService.markFailedForUser(record.getId(), record.getUserId(), STALE_TASK_MESSAGE);
+                    recordService.markFailedForUser(
+                            record.getId(), record.getUserId(), GenerationState.INTERRUPTED_MESSAGE);
                 } else {
-                    recordService.markFailed(record.getId(), record.getKeyId(), STALE_TASK_MESSAGE);
+                    recordService.markFailed(record.getId(), record.getKeyId(), GenerationState.INTERRUPTED_MESSAGE);
                 }
                 recovered++;
             } catch (Exception e) {
@@ -104,5 +107,36 @@ public class GenerationRecoveryService {
             }
         }
         return recovered;
+    }
+
+    private void reconcileLateLocalImages(String trigger) {
+        int restored = 0;
+        for (GenerationRecord record : recordRepository
+                .findTop50ByStatusAndImagePathIsNullAndErrorMessageContainingOrderByCreatedAtDesc(
+                        GenerationState.FAILED, "\u751f\u6210\u4efb\u52a1\u4e2d\u65ad")) {
+            try {
+                String imagePath = expectedLocalImagePath(record);
+                if (imagePath != null && recordService.markLocalImageAvailable(record.getId(), imagePath)) {
+                    restored++;
+                }
+            } catch (Exception e) {
+                log.error("Failed to reconcile late generation image: recordId={}", record.getId(), e);
+            }
+        }
+        if (restored > 0) {
+            log.warn("Restored late generation images: count={}, trigger={}", restored, trigger);
+        }
+    }
+
+    private String expectedLocalImagePath(GenerationRecord record) {
+        String fileName = record.getTaskCode() + ".png";
+        if (record.getUserEmail() != null && !record.getUserEmail().isBlank()) {
+            String ownerFolder = authService.safeEmailFolder(record.getUserEmail());
+            String ownedPath = ownerFolder + "/" + fileName;
+            if (storageConfig.resolveReadableImageFile(ownedPath) != null) {
+                return ownedPath;
+            }
+        }
+        return storageConfig.resolveReadableImageFile(fileName) != null ? fileName : null;
     }
 }

@@ -57,13 +57,20 @@ public class AsyncGenerationExecutor {
             return;
         }
         long startedAt = System.currentTimeMillis();
-        log.info("Async generation started: recordId={}, taskCode={}, type={}", recordId, taskCode, generationType);
+        DistributedLockService.LockLease lease = null;
         try {
+            lease = distributedLockService.keepAlive(
+                    lock.orElseThrow(), Duration.ofMillis(generationLockTtlMs));
+            log.info("Async generation started: recordId={}, taskCode={}, type={}",
+                    recordId, taskCode, generationType);
             runLockedGeneration(recordId, taskCode, prompt, generationType, sourceImagePath, ownerFolder, startedAt);
         } catch (Exception e) {
             log.error("Async generation failed: recordId={}, taskCode={}", recordId, taskCode, e);
             markGenerationFailed(recordId, keyId, userId, generationType, e);
         } finally {
+            if (lease != null) {
+                lease.close();
+            }
             distributedLockService.release(lock.orElse(null));
         }
     }

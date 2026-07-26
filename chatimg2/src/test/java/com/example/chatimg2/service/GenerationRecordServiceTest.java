@@ -124,6 +124,46 @@ class GenerationRecordServiceTest {
     }
 
     @Test
+    void interruptedRecordIsRestoredWhenLateImageWasSaved() {
+        GenerationRecord record = record(15, GenerationState.FAILED);
+        record.setUserId(7);
+        record.setCreditsCost(20);
+        record.setErrorMessage(GenerationState.INTERRUPTED_MESSAGE);
+        UserAccount user = new UserAccount();
+        user.setId(7);
+        user.setTotalCredits(100);
+        user.setUsedCredits(20);
+        when(recordRepository.findByIdForUpdate(15)).thenReturn(Optional.of(record));
+        when(userRepository.findByIdForUpdate(7)).thenReturn(Optional.of(user));
+
+        assertThat(service.markLocalImageAvailable(15, "user/TASK-15.png")).isTrue();
+
+        assertThat(record.getStatus()).isEqualTo(GenerationState.COMPLETED);
+        assertThat(record.getImagePath()).isEqualTo("user/TASK-15.png");
+        assertThat(record.getErrorMessage()).isNull();
+        assertThat(user.getUsedCredits()).isEqualTo(40);
+        verify(keyService).syncUserUsageToBoundKeys(user);
+    }
+
+    @Test
+    void interruptedRecordIsRestoredWhenLateRemoteResultArrives() {
+        GenerationRecord record = record(16, GenerationState.FAILED);
+        record.setKeyId(3);
+        record.setCreditsCost(20);
+        record.setErrorMessage(GenerationState.INTERRUPTED_MESSAGE);
+        ActivationKey key = key(3, 100, 0);
+        when(recordRepository.findByIdForUpdate(16)).thenReturn(Optional.of(record));
+        when(keyRepository.findByIdForUpdate(3)).thenReturn(Optional.of(key));
+
+        assertThat(service.markRemoteImageAvailable(16, "https://cdn.example/late.png")).isTrue();
+
+        assertThat(record.getStatus()).isEqualTo(GenerationState.COMPLETED);
+        assertThat(record.getRemoteImageUrl()).isEqualTo("https://cdn.example/late.png");
+        assertThat(record.getErrorMessage()).isNull();
+        assertThat(key.getUsedCredits()).isEqualTo(20);
+    }
+
+    @Test
     void remoteCompletedRecordCanUpgradeToLocalDelivery() {
         GenerationRecord record = record(14, GenerationState.PROCESSING);
         when(recordRepository.findByIdForUpdate(14)).thenReturn(Optional.of(record));

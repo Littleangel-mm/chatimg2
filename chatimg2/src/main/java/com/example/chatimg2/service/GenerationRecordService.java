@@ -99,6 +99,16 @@ public class GenerationRecordService {
         return runDbOperationWithRetry(() -> requireTransactionResult(transactionTemplate.execute(status -> {
             GenerationRecord record = findRecordForUpdate(recordId);
             if (GenerationState.isFailed(record.getStatus())) {
+                if (GenerationState.isInterruptedFailure(record.getErrorMessage())
+                        && chargeRecordCredits(record)) {
+                    record.setImagePath(imagePath);
+                    record.setRemoteImageUrl(null);
+                    record.setStatus(GenerationState.COMPLETED);
+                    record.setErrorMessage(null);
+                    recordRepository.save(record);
+                    log.info("Restored late image result after interrupted recovery: recordId={}", recordId);
+                    return true;
+                }
                 log.warn("Ignore local image for failed generation: recordId={}", recordId);
                 return false;
             }
@@ -123,6 +133,15 @@ public class GenerationRecordService {
         return runDbOperationWithRetry(() -> requireTransactionResult(transactionTemplate.execute(status -> {
             GenerationRecord record = findRecordForUpdate(recordId);
             if (GenerationState.isFailed(record.getStatus())) {
+                if (GenerationState.isInterruptedFailure(record.getErrorMessage())
+                        && chargeRecordCredits(record)) {
+                    record.setRemoteImageUrl(remoteImageUrl);
+                    record.setStatus(GenerationState.COMPLETED);
+                    record.setErrorMessage(null);
+                    recordRepository.save(record);
+                    log.info("Restored late remote result after interrupted recovery: recordId={}", recordId);
+                    return true;
+                }
                 log.warn("Ignore remote image for failed generation: recordId={}", recordId);
                 return false;
             }
@@ -222,6 +241,35 @@ public class GenerationRecordService {
             key.setUsedCredits(Math.max(0, key.getUsedCredits() - cost));
             keyRepository.save(key);
         }, () -> log.error("Cannot refund generation credits because key is missing: keyId={}", keyId));
+    }
+
+    private boolean chargeRecordCredits(GenerationRecord record) {
+        int cost = resolveCreditCost(record);
+        if (record.getUserId() != null) {
+            UserAccount user = userRepository.findByIdForUpdate(record.getUserId()).orElse(null);
+            if (user == null) {
+                log.error("Cannot restore generation charge because user is missing: recordId={}, userId={}",
+                        record.getId(), record.getUserId());
+                return false;
+            }
+            user.setUsedCredits(user.getUsedCredits() + cost);
+            userRepository.save(user);
+            keyService.syncUserUsageToBoundKeys(user);
+            return true;
+        }
+        if (record.getKeyId() == null) {
+            log.error("Cannot restore generation charge because keyId is missing: recordId={}", record.getId());
+            return false;
+        }
+        ActivationKey key = keyRepository.findByIdForUpdate(record.getKeyId()).orElse(null);
+        if (key == null) {
+            log.error("Cannot restore generation charge because key is missing: recordId={}, keyId={}",
+                    record.getId(), record.getKeyId());
+            return false;
+        }
+        key.setUsedCredits(key.getUsedCredits() + cost);
+        keyRepository.save(key);
+        return true;
     }
 
     private int resolveCreditCost(GenerationRecord record) {

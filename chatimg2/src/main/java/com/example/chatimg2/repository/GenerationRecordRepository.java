@@ -33,5 +33,8 @@ public interface GenerationRecordRepository extends JpaRepository<GenerationReco
     List<GenerationRecord> findTop50ByStatusAndImagePathIsNullAndCreatedAtBeforeOrderByCreatedAtAsc(
             String status, LocalDateTime createdAt);
 
+    List<GenerationRecord> findTop50ByStatusAndImagePathIsNullAndErrorMessageContainingOrderByCreatedAtDesc(
+            String status, String errorMarker);
+
     boolean existsByTaskCode(String taskCode);
 }
