@@ -1,7 +1,7 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
-import { getRemoteImageDisplayUrl, normalizeImageUrl, requestImageBackup } from '../../api'
+import { normalizeImageUrl } from '../../api'
 import { extractPolicyAdvice, resolveGenerationStatus } from '../../utils/generation'
 import ImageLightbox from '../ImageLightbox.vue'
 
@@ -10,9 +10,7 @@ const props = defineProps({
 })
 
 const convStore = useConversationsStore()
-const remoteDisplayUrl = ref('')
-const imageLoadFailed = ref(false)
-const imageUrl = computed(() => convStore.imageUrlForMessage(props.message) || remoteDisplayUrl.value)
+const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
 const messageStatus = computed(() => {
   return resolveGenerationStatus(props.message.record || { status: props.message.status })
@@ -29,55 +27,10 @@ const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorM
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
 const previewImage = ref('')
-const backupRequestedRecordId = ref(null)
-let displayRequestVersion = 0
 
 function openPreview(url) {
   if (url) previewImage.value = url
 }
-
-function requestLocalBackup(displayUrl = remoteDisplayUrl.value) {
-  const record = props.message.record
-  if (!record?.remoteImageAvailable || !record.id || backupRequestedRecordId.value === record.id) return
-  backupRequestedRecordId.value = record.id
-  requestImageBackup(record, displayUrl).catch(() => {
-    if (backupRequestedRecordId.value === record.id) backupRequestedRecordId.value = null
-  })
-}
-
-function handleImageError() {
-  imageLoadFailed.value = true
-  requestLocalBackup()
-}
-
-watch(
-  () => [
-    props.message.record?.id,
-    props.message.record?.imagePath,
-    props.message.record?.imageUrl,
-    props.message.record?.remoteImageAvailable
-  ],
-  async ([recordId, imagePath, imagePathFallback, remoteAvailable]) => {
-    const requestVersion = ++displayRequestVersion
-    imageLoadFailed.value = false
-    if (imagePath || imagePathFallback || !remoteAvailable || !recordId) {
-      remoteDisplayUrl.value = ''
-      return
-    }
-    try {
-      const displayUrl = await getRemoteImageDisplayUrl(props.message.record)
-      if (requestVersion !== displayRequestVersion) return
-      remoteDisplayUrl.value = displayUrl
-      await nextTick()
-      if (requestVersion !== displayRequestVersion) return
-      requestLocalBackup(displayUrl)
-    } catch {
-      if (requestVersion === displayRequestVersion) remoteDisplayUrl.value = ''
-      requestLocalBackup('')
-    }
-  },
-  { immediate: true }
-)
 
 </script>
 
@@ -110,14 +63,11 @@ watch(
           <span>生成失败</span>
           <p v-if="displayError">{{ displayError }}</p>
         </div>
-        <div v-else-if="imageUrl && !imageLoadFailed" class="assistant-image">
+        <div v-else-if="imageUrl" class="assistant-image">
           <img
             :src="imageUrl"
             :alt="message.record?.prompt || '生成结果'"
             loading="lazy"
-            referrerpolicy="no-referrer"
-            @load="requestLocalBackup()"
-            @error="handleImageError"
             @click="openPreview(imageUrl)"
           />
           <p v-if="message.record?.taskCode" class="task-code">{{ message.record.taskCode }}</p>

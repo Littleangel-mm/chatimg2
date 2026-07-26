@@ -19,9 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -30,10 +28,7 @@ public class ImageApiClient {
 
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String AUTO_IMAGE_SIZE = "auto";
     private static final String DEFAULT_IMAGE_SIZE = "1024x1024";
-    private static final String PORTRAIT_IMAGE_SIZE = "1024x1536";
-    private static final String LANDSCAPE_IMAGE_SIZE = "1536x1024";
 
     @Value("${app.api.key}")
     private String apiKey;
@@ -43,9 +38,6 @@ public class ImageApiClient {
 
     @Value("${app.api.model.text2img:gpt-image-2}")
     private String defaultText2imgModel;
-
-    @Value("${app.api.image.size:auto}")
-    private String configuredImageSize;
 
     @Value("${app.api.poll.initial-delay-ms:5000}")
     private long pollInitialDelayMs;
@@ -112,46 +104,34 @@ public class ImageApiClient {
         }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
-            List<String> sizes = buildSizeAttempts(resolveImageSizeFromPrompt(prompt));
-            for (int sizeIndex = 0; sizeIndex < sizes.size(); sizeIndex++) {
-                String size = sizes.get(sizeIndex);
-                try {
-                    var body = new java.util.HashMap<String, Object>();
-                    body.put("model", model);
-                    body.put("prompt", prompt);
-                    body.put("n", 1);
-                    if (size != null && !size.isBlank()) {
-                        body.put("size", size);
-                    }
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    Request request = new Request.Builder()
-                            .url(getApiBaseUrl() + "/v1/images/generations")
-                            .addHeader("Authorization", "Bearer " + apiKey)
-                            .addHeader("Content-Type", "application/json")
-                            .addHeader("Idempotency-Key", UUID.randomUUID().toString())
-                            .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
-                            .build();
+            try {
+                var body = new java.util.HashMap<String, Object>();
+                body.put("model", model);
+                body.put("prompt", prompt);
+                body.put("n", 1);
+                body.put("size", DEFAULT_IMAGE_SIZE);
+                body.put("quality", "medium");
+                String jsonBody = objectMapper.writeValueAsString(body);
+                Request request = new Request.Builder()
+                        .url(getApiBaseUrl() + "/v1/images/generations")
+                        .addHeader("Authorization", "Bearer " + apiKey)
+                        .addHeader("Content-Type", "application/json")
+                        .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
+                        .build();
 
-                    log.info("Text2img trying model: {}, size={}", model, size == null ? "omitted" : size);
-                    return resolveImageFromSubmit(request);
-                } catch (ApiCallException e) {
-                    lastError = e;
-                    boolean hasNextSize = sizeIndex < sizes.size() - 1;
-                    if (hasNextSize && shouldRetryText2imgWithNextSize(e)) {
-                        log.warn("Text2img size {} failed, trying next size option: {}",
-                                size == null ? "omitted" : size, e.getMessage());
-                        continue;
-                    }
-                    boolean hasNext = i < models.size() - 1;
-                    if (isModelNotFound(e) && hasNext) {
-                        log.warn("Model {} not available, trying next...", model);
-                        break;
-                    }
-                    throw e;
-                } catch (JsonProcessingException e) {
-                    throw new ApiCallException(null, "request_serialization_error", "invalid_request_body",
-                            false, "文生图请求序列化失败", "生图请求处理失败，请稍后重试", e);
+                log.info("Text2img trying model: {}, size={}, quality=medium", model, DEFAULT_IMAGE_SIZE);
+                return resolveImageFromSubmit(request);
+            } catch (ApiCallException e) {
+                lastError = e;
+                boolean hasNext = i < models.size() - 1;
+                if (isModelNotFound(e) && hasNext) {
+                    log.warn("Model {} not available, trying next...", model);
+                    continue;
                 }
+                throw e;
+            } catch (JsonProcessingException e) {
+                throw new ApiCallException(null, "request_serialization_error", "invalid_request_body",
+                        false, "文生图请求序列化失败", "生图请求处理失败，请稍后重试", e);
             }
         }
         if (lastError != null) {
@@ -160,18 +140,17 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的文生图模型");
     }
 
-    public String imageEdit(String prompt, byte[] imageBytes, String imageMediaType, String fileName,
-                            String requestedModel, List<String> fallbacks) {
+    public String imageEdit(String prompt, byte[] imageBytes, String requestedModel) {
         validateConfiguration();
         ApiCallException lastError = null;
-        List<String> models = buildImageEditModels(requestedModel, fallbacks);
+        List<String> models = buildImageEditModels(requestedModel);
         if (models.isEmpty()) {
             throw new BusinessException("IMAGE_MODEL_MISSING", "未配置可用的图生图模型");
         }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
             try {
-                return submitImageEdit(prompt, imageBytes, imageMediaType, fileName, model);
+                return submitImageEdit(prompt, imageBytes, model);
             } catch (ApiCallException e) {
                 lastError = e;
                 boolean hasNext = i < models.size() - 1;
@@ -188,29 +167,24 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的图生图模型");
     }
 
-    private String submitImageEdit(String prompt, byte[] imageBytes, String imageMediaType,
-                                   String fileName, String model) {
-        String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
-        String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
-        String size = resolveImageSizeFromPrompt(prompt);
-        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
+    private String submitImageEdit(String prompt, byte[] imageBytes, String model) {
+        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse("image/png"));
         MultipartBody body = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("image", uploadName, fileBody)
+                .addFormDataPart("image", "source.png", fileBody)
                 .addFormDataPart("prompt", prompt)
                 .addFormDataPart("model", model)
                 .addFormDataPart("n", "1")
-                .addFormDataPart("size", size)
+                .addFormDataPart("size", DEFAULT_IMAGE_SIZE)
                 .build();
 
         Request request = new Request.Builder()
                 .url(getApiBaseUrl() + "/v1/images/edits")
                 .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Idempotency-Key", UUID.randomUUID().toString())
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
+        log.info("Img2img using model: {}, mediaType=image/png, size={}", model, DEFAULT_IMAGE_SIZE);
         return resolveImageFromSubmit(request);
     }
 
@@ -231,75 +205,16 @@ public class ImageApiClient {
         return new ArrayList<>(models);
     }
 
-    private List<String> buildImageEditModels(String requestedModel, List<String> fallbacks) {
+    private List<String> buildImageEditModels(String requestedModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
         if (isGptImageModel(requestedModel)) {
             models.add(requestedModel.trim());
-        }
-        if (fallbacks != null) {
-            fallbacks.stream()
-                    .filter(this::isGptImageModel)
-                    .map(String::trim)
-                    .forEach(models::add);
         }
         return new ArrayList<>(models);
     }
 
     private boolean isGptImageModel(String model) {
         return model != null && model.trim().startsWith("gpt-image");
-    }
-
-    private String resolveImageSizeFromPrompt(String prompt) {
-        String text = normalizePrompt(prompt);
-        if (containsAny(text, "9:16", "9/16", "916", "1080x1920", "720x1280", "竖屏", "竖版", "竖图", "手机壁纸", "portrait", "vertical")) {
-            return PORTRAIT_IMAGE_SIZE;
-        }
-        if (containsAny(text, "16:9", "16/9", "169", "1920x1080", "1280x720", "横屏", "横版", "横图", "landscape", "horizontal", "wide")) {
-            return LANDSCAPE_IMAGE_SIZE;
-        }
-        if (containsAny(text, "1:1", "1/1", "方图", "方形", "square")) {
-            return DEFAULT_IMAGE_SIZE;
-        }
-        return DEFAULT_IMAGE_SIZE;
-    }
-
-    private List<String> buildSizeAttempts(String preferredSize) {
-        LinkedHashSet<String> sizes = new LinkedHashSet<>();
-        if (preferredSize != null && !preferredSize.isBlank()) {
-            sizes.add(preferredSize.trim());
-        }
-        if (configuredImageSize != null && !configuredImageSize.isBlank()) {
-            sizes.add(configuredImageSize.trim());
-        }
-        sizes.add(AUTO_IMAGE_SIZE);
-        sizes.add(null);
-        sizes.add(DEFAULT_IMAGE_SIZE);
-        return new ArrayList<>(sizes);
-    }
-
-    private boolean shouldRetryText2imgWithNextSize(ApiCallException error) {
-        Integer status = error.getHttpStatus();
-        if (status == null) {
-            return false;
-        }
-        return ImageApiErrorClassifier.isSizeError(status, toErrorDetails(error));
-    }
-
-    private String normalizePrompt(String prompt) {
-        return (prompt == null ? "" : prompt)
-                .toLowerCase(Locale.ROOT)
-                .replace('\uff1a', ':')
-                .replace('\u00d7', 'x')
-                .replace('*', 'x');
-    }
-
-    private boolean containsAny(String text, String... values) {
-        for (String value : values) {
-            if (text.contains(value)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private String resolveImageFromSubmit(Request request) {

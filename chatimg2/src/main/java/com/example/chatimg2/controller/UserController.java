@@ -117,29 +117,6 @@ public class UserController {
         }
     }
 
-    @GetMapping("/generate/{recordId}/display-url")
-    public ApiResponse<Map<String, String>> getGenerateDisplayUrl(
-            @PathVariable Integer recordId,
-            @RequestParam(required = false) String keyCode,
-            HttpServletRequest servletRequest) {
-        try {
-            Optional<AuthPrincipal> principal = authService.current(servletRequest);
-            String displayUrl;
-            if (principal.isPresent() && principal.get().isUser()) {
-                displayUrl = imageGenerationService.getRemoteDisplayUrlForUser(
-                        principal.get().user(), recordId);
-            } else {
-                if (keyCode == null || keyCode.isBlank()) {
-                    return ApiResponse.error(401, "请先登录或激活密钥");
-                }
-                displayUrl = imageGenerationService.getRemoteDisplayUrl(keyCode, recordId);
-            }
-            return ApiResponse.success(Map.of("displayUrl", displayUrl));
-        } catch (RuntimeException e) {
-            return requestError(e);
-        }
-    }
-
     @PostMapping("/generate/{recordId}/backup")
     public ApiResponse<Void> retryImageBackup(
             @PathVariable Integer recordId,

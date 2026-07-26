@@ -5,7 +5,6 @@ import com.example.chatimg2.exception.ApiCallException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.task.TaskRejectedException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -22,7 +21,6 @@ public class AsyncGenerationExecutor {
 
     private final ImageApiClient imageApiClient;
     private final ImageBackupService imageBackupService;
-    private final ImageResultDeliveryService imageResultDeliveryService;
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
     private final DistributedLockService distributedLockService;
@@ -81,37 +79,18 @@ public class AsyncGenerationExecutor {
         if ("img2img".equals(generationType)) {
             Path sourcePath = resolveSourcePath(sourceImagePath);
             byte[] imageBytes = Files.readAllBytes(sourcePath);
-            String mediaType = ImageContentSupport.detectMediaType(sourcePath, imageBytes);
             imageUrl = imageApiClient.imageEdit(
                     prompt,
                     imageBytes,
-                    mediaType,
-                    sourcePath.getFileName().toString(),
-                    img2imgModel,
-                    List.of());
+                    img2imgModel);
         } else {
             imageUrl = imageApiClient.textToImage(prompt, text2imgModel, List.of());
         }
 
-        if (isRemoteUrl(imageUrl)) {
-            if (recordService.markRemoteImageAvailable(recordId, imageUrl)) {
-                try {
-                    imageResultDeliveryService.retrySavedRemoteImage(recordId);
-                } catch (TaskRejectedException e) {
-                    log.warn("Image backup queue is full; remote result remains available: recordId={}, taskCode={}",
-                            recordId, taskCode);
-                }
-            }
-        } else {
-            ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
-            recordService.markLocalImageAvailable(recordId, backup.imagePath());
-        }
+        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
+        recordService.markLocalImageAvailable(recordId, backup.imagePath());
         log.info("Async generation completed: recordId={}, taskCode={}, elapsedMs={}",
                 recordId, taskCode, System.currentTimeMillis() - startedAt);
-    }
-
-    private boolean isRemoteUrl(String value) {
-        return value != null && (value.startsWith("http://") || value.startsWith("https://"));
     }
 
     private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType, Throwable error) {
