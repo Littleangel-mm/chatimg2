@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.net.URI;
 import java.util.Base64;
 import java.util.List;
 
@@ -117,6 +118,14 @@ public class ImageGenerationService {
         return prepareRecordForRead(record);
     }
 
+    public String getRemoteDisplayUrl(String keyCode, Integer recordId) {
+        return requireRemoteDisplayUrl(getRecordStatus(keyCode, recordId));
+    }
+
+    public String getRemoteDisplayUrlForUser(UserAccount user, Integer recordId) {
+        return requireRemoteDisplayUrl(getRecordStatusForUser(user, recordId));
+    }
+
     public void retryRemoteImageBackup(String keyCode, Integer recordId) {
         GenerationRecord record = getRecordStatus(keyCode, recordId);
         if (record.isRemoteImageAvailable()) {
@@ -163,6 +172,27 @@ public class ImageGenerationService {
 
     private GenerationRecord prepareRecordForRead(GenerationRecord record) {
         return recordViewService.prepare(record);
+    }
+
+    private String requireRemoteDisplayUrl(GenerationRecord record) {
+        String remoteUrl = record == null ? null : record.getRemoteImageUrl();
+        if (!GenerationState.isCompleted(record == null ? null : record.getStatus()) || !isHttpUrl(remoteUrl)) {
+            throw new BusinessException("REMOTE_IMAGE_UNAVAILABLE", "远程图片结果暂不可用");
+        }
+        return remoteUrl;
+    }
+
+    private boolean isHttpUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value);
+            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    && uri.getHost() != null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private String resolveGenerationType(String type) {

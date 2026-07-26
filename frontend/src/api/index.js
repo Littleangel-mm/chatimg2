@@ -87,20 +87,29 @@ export { generateApi }
 export function getImageUrl(record) {
   if (!record) return ''
   const path = record.imagePath || record.imageUrl || ''
-  if (!path && record.remoteImageAvailable && record.taskCode) {
-    return `/api/images/results/${encodeURIComponent(record.taskCode)}`
-  }
+  if (!path && record.displayUrl) return record.displayUrl
   return normalizeImageUrl(path, API_IMAGE_BASE_PATH)
 }
 
-export async function requestImageBackup(record) {
+export async function getRemoteImageDisplayUrl(record) {
+  if (!record?.remoteImageAvailable || !record.id) return ''
+  const keyCode = localStorage.getItem('keyCode') || ''
+  const params = keyCode ? { keyCode } : undefined
+  const { data } = await api.get(`/user/generate/${record.id}/display-url`, { params })
+  if (data?.code !== 200) throw new Error(data?.message || 'Remote image is unavailable')
+  return data?.data?.displayUrl || ''
+}
+
+export async function requestImageBackup(record, displayUrl = '') {
   if (!record?.remoteImageAvailable || !record.id) return Promise.resolve()
   const keyCode = localStorage.getItem('keyCode') || ''
   const params = keyCode ? { keyCode } : undefined
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 30000)
   try {
-    const response = await fetch(getImageUrl(record), { signal: controller.signal })
+    const remoteUrl = displayUrl || record.displayUrl || await getRemoteImageDisplayUrl(record)
+    if (!remoteUrl) throw new Error('Remote image is unavailable')
+    const response = await fetch(remoteUrl, { signal: controller.signal, mode: 'cors' })
     if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`)
     const image = await response.blob()
     if (!image.size || image.size > 20 * 1024 * 1024) throw new Error('Invalid image size')
