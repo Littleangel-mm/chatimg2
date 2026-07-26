@@ -35,7 +35,7 @@ function recordIdEquals(a, b) {
 
 function resolveRecordStatus(record) {
   const status = (record?.status || '').toLowerCase()
-  if (record?.imagePath || record?.imageUrl) return 'completed'
+  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
   if (status === 'completed') return 'processing'
   if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
   if (status === 'failed') return status
@@ -102,7 +102,7 @@ function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
   return !recordIdEquals(msg.recordId || current.id, record.id) ||
     resolveRecordStatus(msg.record || { status: msg.status }) !== nextStatus ||
     (current.imagePath || '') !== (record.imagePath || '') ||
-    (current.remoteImageUrl || '') !== (record.remoteImageUrl || '') ||
+    !!current.remoteImageAvailable !== !!record.remoteImageAvailable ||
     (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
     (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
@@ -669,7 +669,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const nextStatus = resolveRecordStatus(latest)
         const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
         const imageChanged = latest.imagePath !== msg.record?.imagePath ||
-          latest.remoteImageUrl !== msg.record?.remoteImageUrl
+          !!latest.remoteImageAvailable !== !!msg.record?.remoteImageAvailable
         const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
         if (nextStatus !== prevStatus || imageChanged || sourceMissing) {
           msg.recordId = latest.id
@@ -688,7 +688,8 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (msg.role !== 'assistant') continue
 
         const currentStatus = resolveRecordStatus(msg.record || { status: msg.status })
-        const needsRecovered = currentStatus === 'processing' || !msg.record?.imagePath
+        const needsRecovered = currentStatus === 'processing' ||
+          !(msg.record?.imagePath || msg.record?.imageUrl || msg.record?.remoteImageAvailable)
         if (!needsRecovered) continue
         if (msg.recordId || msg.record?.id) continue
 
@@ -700,7 +701,7 @@ export const useConversationsStore = defineStore('conversations', () => {
             record?.id != null &&
             canRecoverRecordForMessage(record, conv, msg, userMsg) &&
             resolveRecordStatus(record) === 'completed' &&
-            !!(record.imagePath || record.imageUrl)
+            !!(record.imagePath || record.imageUrl || record.remoteImageAvailable)
           )
           .sort((a, b) =>
             Math.abs(recordCreatedTime(a) - msg.createdAt) -

@@ -127,6 +127,32 @@ public class GenerationRecordService {
         });
     }
 
+    public void markRemoteImageAvailable(Integer recordId, String remoteImageUrl) {
+        if (remoteImageUrl == null || remoteImageUrl.isBlank()) {
+            throw new IllegalArgumentException("Remote image URL must not be blank");
+        }
+        runDbOperationWithRetry(() -> {
+            com.example.chatimg2.entity.GenerationRecord saved = transactionTemplate.execute(status -> {
+                com.example.chatimg2.entity.GenerationRecord record = recordRepository.findById(recordId)
+                        .orElseThrow(() -> new RuntimeException("Generation record not found"));
+                if (record.getImagePath() != null && !record.getImagePath().isBlank()) {
+                    return record;
+                }
+                if ("failed".equals(record.getStatus())) {
+                    rechargeRefundedCredits(record);
+                }
+                record.setRemoteImageUrl(remoteImageUrl);
+                record.setStatus("completed");
+                record.setErrorMessage(null);
+                return recordRepository.save(record);
+            });
+            if (saved == null) {
+                throw new RuntimeException("Failed to save remote image result");
+            }
+            return saved;
+        });
+    }
+
     public void markFailed(Integer recordId, Integer keyId, String errorMessage) {
         try {
             runDbOperationWithRetry(() -> {

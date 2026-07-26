@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
@@ -115,6 +116,54 @@ public class UserController {
             return ApiResponse.success(record);
         } catch (RuntimeException e) {
             return requestError(e);
+        }
+    }
+
+    @PostMapping("/generate/{recordId}/backup")
+    public ApiResponse<Void> retryImageBackup(
+            @PathVariable Integer recordId,
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
+        try {
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && principal.get().isUser()) {
+                imageGenerationService.retryRemoteImageBackupForUser(principal.get().user(), recordId);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "Authentication required");
+                }
+                imageGenerationService.retryRemoteImageBackup(keyCode, recordId);
+            }
+            return ApiResponse.success(null);
+        } catch (RuntimeException e) {
+            return requestError(e);
+        }
+    }
+
+    @PostMapping(value = "/generate/{recordId}/backup-upload", consumes = "multipart/form-data")
+    public ApiResponse<Void> uploadImageBackup(
+            @PathVariable Integer recordId,
+            @RequestPart("image") MultipartFile image,
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
+        try {
+            byte[] imageBytes = image.getBytes();
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && principal.get().isUser()) {
+                imageGenerationService.saveBrowserImageBackupForUser(
+                        principal.get().user(), recordId, imageBytes);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "Authentication required");
+                }
+                imageGenerationService.saveBrowserImageBackup(keyCode, recordId, imageBytes);
+            }
+            return ApiResponse.success(null);
+        } catch (RuntimeException e) {
+            return requestError(e);
+        } catch (java.io.IOException e) {
+            log.warn("Read browser image backup failed: recordId={}", recordId, e);
+            return ApiResponse.error(400, "Invalid image upload");
         }
     }
 

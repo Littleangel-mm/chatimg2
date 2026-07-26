@@ -19,6 +19,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.net.URI;
 import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -63,11 +64,28 @@ public class ImageBackupService {
     public BackupResult backupSync(String imageUrl, String taskCode, String ownerFolder) {
         Path target = targetPath(taskCode, ownerFolder);
         saveToImgDir(imageUrl, target);
-        String imagePath = ownerFolder == null || ownerFolder.isBlank()
-                ? taskCode + ".png"
-                : ownerFolder + "/" + taskCode + ".png";
+        String imagePath = relativeImagePath(taskCode, ownerFolder);
         log.info("Saved generated image to img/{}", imagePath);
         return new BackupResult(imagePath);
+    }
+
+    public BackupResult backupBytes(byte[] imageBytes, String taskCode, String ownerFolder) {
+        if (!isSupportedImage(imageBytes)) {
+            throw new ImageDownloadException("Invalid generated image content");
+        }
+        validateImageSize(imageBytes.length);
+        Path target = targetPath(taskCode, ownerFolder);
+        Path tempPath = target.resolveSibling(target.getFileName() + ".upload-" + UUID.randomUUID() + ".part");
+        try {
+            Files.write(tempPath, imageBytes);
+            moveCompletedFile(tempPath, target);
+            String imagePath = relativeImagePath(taskCode, ownerFolder);
+            log.info("Saved browser-delivered image to img/{}", imagePath);
+            return new BackupResult(imagePath);
+        } catch (IOException e) {
+            deleteQuietly(tempPath);
+            throw new ImageDownloadException("Failed to save browser-delivered image", e);
+        }
     }
 
     @Async
@@ -161,8 +179,27 @@ public class ImageBackupService {
         return target;
     }
 
+    private String relativeImagePath(String taskCode, String ownerFolder) {
+        return ownerFolder == null || ownerFolder.isBlank()
+                ? taskCode + ".png"
+                : ownerFolder + "/" + taskCode + ".png";
+    }
+
+    private boolean isSupportedImage(byte[] bytes) {
+        if (bytes == null || bytes.length < 12) {
+            return false;
+        }
+        boolean jpeg = (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8;
+        boolean png = (bytes[0] & 0xff) == 0x89
+                && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47;
+        boolean webp = bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+        return jpeg || png || webp;
+    }
+
     private void downloadToImgDir(String imageUrl, Path target) {
         ImageDownloadException lastError = null;
+        String resultHost = resultHost(imageUrl);
         for (int attempt = 1; attempt <= 3; attempt++) {
             Path tempPath = tempPath(target);
             try {
@@ -190,17 +227,26 @@ public class ImageBackupService {
                 if (e.getCause() == null) {
                     throw e;
                 }
-                log.warn("Download attempt {}/3 failed: {}", attempt, e.getMessage());
+                log.warn("Download attempt {}/3 failed: host={}, reason={}", attempt, resultHost, e.getMessage());
             } catch (IOException e) {
                 deleteQuietly(tempPath);
                 lastError = new ImageDownloadException("下载图片网络异常: " + e.getMessage(), e);
-                log.warn("Download attempt {}/3 failed: {}", attempt, e.getMessage());
+                log.warn("Download attempt {}/3 failed: host={}, reason={}", attempt, resultHost, e.getMessage());
             }
         }
         if (lastError != null) {
             throw new ImageDownloadException("图片下载重试后仍失败", lastError);
         }
         throw new ImageDownloadException("图片下载失败，未获得有效响应");
+    }
+
+    private String resultHost(String imageUrl) {
+        try {
+            String host = URI.create(imageUrl).getHost();
+            return host == null || host.isBlank() ? "unknown" : host;
+        } catch (IllegalArgumentException e) {
+            return "invalid";
+        }
     }
 
     private void copyWithLimit(InputStream inputStream, Path target) throws IOException {

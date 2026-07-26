@@ -15,6 +15,8 @@ public interface GenerationRecordRepository extends JpaRepository<GenerationReco
 
     Optional<GenerationRecord> findFirstByKeyIdAndClientMessageIdOrderByCreatedAtDesc(Integer keyId, String clientMessageId);
 
+    Optional<GenerationRecord> findByTaskCode(String taskCode);
+
     List<GenerationRecord> findTop100ByOrderByCreatedAtDesc();
 
     List<GenerationRecord> findTop50ByStatusAndImagePathIsNullAndCreatedAtBeforeOrderByCreatedAtAsc(

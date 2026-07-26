@@ -20,7 +20,7 @@ function normalizeStatus(status) {
 
 function resolveRecordStatus(record) {
   const status = normalizeStatus(record?.status)
-  if (record?.imagePath || record?.imageUrl) return 'completed'
+  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
   if (status === 'completed') return 'processing'
   if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
   if (status === 'failed') return status

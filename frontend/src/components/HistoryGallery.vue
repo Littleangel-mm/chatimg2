@@ -1,13 +1,20 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useUserStore } from '../stores/user'
-import { getImageUrl } from '../api'
+import { getImageUrl, requestImageBackup } from '../api'
 import ImageLightbox from './ImageLightbox.vue'
 
 const userStore = useUserStore()
 
 const items = computed(() => userStore.history)
 const previewImage = ref('')
+const requestedBackups = new Set()
+
+function ensureLocalBackup(item) {
+  if (!item?.remoteImageAvailable || !item.id || requestedBackups.has(item.id)) return
+  requestedBackups.add(item.id)
+  requestImageBackup(item).catch(() => requestedBackups.delete(item.id))
+}
 const previewAlt = ref('图片预览')
 
 function openPreview(item) {
@@ -44,6 +51,7 @@ function openPreview(item) {
             loading="lazy"
             decoding="async"
             :fetchpriority="index < 4 ? 'high' : 'low'"
+            @load="ensureLocalBackup(item)"
           />
           <div class="item-overlay">
             <span v-if="item.taskCode" class="item-task">{{ item.taskCode }}</span>

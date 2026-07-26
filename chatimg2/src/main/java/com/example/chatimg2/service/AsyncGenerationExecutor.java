@@ -21,6 +21,7 @@ public class AsyncGenerationExecutor {
 
     private final ImageApiClient imageApiClient;
     private final ImageBackupService imageBackupService;
+    private final ImageResultDeliveryService imageResultDeliveryService;
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
     private final DistributedLockService distributedLockService;
@@ -84,10 +85,25 @@ public class AsyncGenerationExecutor {
             imageUrl = imageApiClient.textToImage(prompt, TEXT2IMG_MODEL, List.of());
         }
 
-        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
-        recordService.markCompleted(recordId, backup.imagePath());
+        if (isRemoteUrl(imageUrl)) {
+            recordService.markRemoteImageAvailable(recordId, imageUrl);
+            try {
+                imageResultDeliveryService.retrySavedRemoteImage(recordId);
+            } catch (Exception e) {
+                log.warn("Generated image is available remotely but local backup could not be queued: "
+                                + "recordId={}, taskCode={}, reason={}",
+                        recordId, taskCode, e.getMessage());
+            }
+        } else {
+            ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
+            recordService.markCompleted(recordId, backup.imagePath());
+        }
         log.info("Async generation completed: recordId={}, taskCode={}, elapsedMs={}",
                 recordId, taskCode, System.currentTimeMillis() - startedAt);
+    }
+
+    private boolean isRemoteUrl(String value) {
+        return value != null && (value.startsWith("http://") || value.startsWith("https://"));
     }
 
     private void markGenerationFailed(Integer recordId, Integer keyId, Integer userId, String generationType, Throwable error) {

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
-import { normalizeImageUrl } from '../../api'
+import { normalizeImageUrl, requestImageBackup } from '../../api'
 import ImageLightbox from '../ImageLightbox.vue'
 
 const props = defineProps({
@@ -15,7 +15,9 @@ const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
 const messageStatus = computed(() => {
-  if (props.message.record?.imagePath || props.message.record?.imageUrl) return 'completed'
+  if (props.message.record?.imagePath || props.message.record?.imageUrl || props.message.record?.remoteImageAvailable) {
+    return 'completed'
+  }
   return (props.message.record?.status || props.message.status || '').toLowerCase()
 })
 const isProcessing = computed(() => {
@@ -30,9 +32,19 @@ const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorM
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
 const previewImage = ref('')
+const backupRequested = ref(false)
 
 function openPreview(url) {
   if (url) previewImage.value = url
+}
+
+function requestLocalBackup() {
+  const record = props.message.record
+  if (!record?.remoteImageAvailable || !record.id || backupRequested.value) return
+  backupRequested.value = true
+  requestImageBackup(record).catch(() => {
+    backupRequested.value = false
+  })
 }
 
 function extractPolicyAdvice(text) {
@@ -83,6 +95,7 @@ function extractPolicyAdvice(text) {
             :src="imageUrl"
             :alt="message.record?.prompt || '生成结果'"
             loading="lazy"
+            @load="requestLocalBackup"
             @click="openPreview(imageUrl)"
           />
           <p v-if="message.record?.taskCode" class="task-code">{{ message.record.taskCode }}</p>

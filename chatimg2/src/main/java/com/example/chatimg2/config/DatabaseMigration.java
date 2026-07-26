@@ -37,7 +37,6 @@ public final class DatabaseMigration {
             stmt.execute("UPDATE generation_records SET task_code = 'TASK-LEGACY-' || LPAD(id::text, 8, '0') WHERE task_code IS NULL");
             stmt.execute("ALTER TABLE generation_records ALTER COLUMN task_code SET NOT NULL");
             stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_records_task_code ON generation_records(task_code)");
-            stmt.execute("UPDATE generation_records SET image_url = regexp_replace(image_url, '^.*/', '') WHERE image_url IS NOT NULL AND image_url LIKE '%/%'");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_id ON generation_records(user_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_user_email ON generation_records(user_email)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_generation_records_client_message_id ON generation_records(client_message_id)");

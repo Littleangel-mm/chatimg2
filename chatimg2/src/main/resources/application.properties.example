@@ -26,6 +26,8 @@ spring.datasource.hikari.idle-timeout=60000
 # 相对路径会按应用所在目录解析：/opt/chatimg2/chatimg2.jar -> /opt/chatimg2/img/
 # 如需放到 chatimg2 目录的同级目录，可配置为 ../img/ 或直接使用绝对路径
 app.image.backup-path=./img/
+spring.servlet.multipart.max-file-size=20MB
+spring.servlet.multipart.max-request-size=22MB
 
 # API config
 app.api.key=${API_KEY:${VITE_API_KEY:}}

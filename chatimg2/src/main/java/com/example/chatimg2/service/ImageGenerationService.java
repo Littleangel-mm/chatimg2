@@ -24,6 +24,7 @@ public class ImageGenerationService {
     private final GenerationRecordRepository recordRepository;
     private final GenerationRecordService recordService;
     private final AsyncGenerationExecutor asyncGenerationExecutor;
+    private final ImageResultDeliveryService imageResultDeliveryService;
     private final ImageStorageConfig storageConfig;
     private final AuthService authService;
 
@@ -92,6 +93,30 @@ public class ImageGenerationService {
             throw new BusinessException("RECORD_FORBIDDEN", "无权查看此记录");
         }
         return normalizeCompletedRecord(record);
+    }
+
+    public void retryRemoteImageBackup(String keyCode, Integer recordId) {
+        GenerationRecord record = getRecordStatus(keyCode, recordId);
+        if (record.isRemoteImageAvailable()) {
+            imageResultDeliveryService.retrySavedRemoteImage(recordId);
+        }
+    }
+
+    public void retryRemoteImageBackupForUser(UserAccount user, Integer recordId) {
+        GenerationRecord record = getRecordStatusForUser(user, recordId);
+        if (record.isRemoteImageAvailable()) {
+            imageResultDeliveryService.retrySavedRemoteImage(recordId);
+        }
+    }
+
+    public void saveBrowserImageBackup(String keyCode, Integer recordId, byte[] imageBytes) {
+        getRecordStatus(keyCode, recordId);
+        imageResultDeliveryService.saveBrowserDeliveredImage(recordId, imageBytes);
+    }
+
+    public void saveBrowserImageBackupForUser(UserAccount user, Integer recordId, byte[] imageBytes) {
+        getRecordStatusForUser(user, recordId);
+        imageResultDeliveryService.saveBrowserDeliveredImage(recordId, imageBytes);
     }
 
     public List<GenerationRecord> getHistory(String keyCode) {

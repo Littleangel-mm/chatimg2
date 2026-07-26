@@ -87,7 +87,31 @@ export { generateApi }
 export function getImageUrl(record) {
   if (!record) return ''
   const path = record.imagePath || record.imageUrl || ''
+  if (!path && record.remoteImageAvailable && record.taskCode) {
+    return `/api/images/results/${encodeURIComponent(record.taskCode)}`
+  }
   return normalizeImageUrl(path, API_IMAGE_BASE_PATH)
+}
+
+export async function requestImageBackup(record) {
+  if (!record?.remoteImageAvailable || !record.id) return Promise.resolve()
+  const keyCode = localStorage.getItem('keyCode') || ''
+  const params = keyCode ? { keyCode } : undefined
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30000)
+  try {
+    const response = await fetch(getImageUrl(record), { signal: controller.signal })
+    if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`)
+    const image = await response.blob()
+    if (!image.size || image.size > 20 * 1024 * 1024) throw new Error('Invalid image size')
+    const form = new FormData()
+    form.append('image', image, `${record.taskCode || 'generated-image'}.png`)
+    return await api.post(`/user/generate/${record.id}/backup-upload`, form, { params })
+  } catch {
+    return api.post(`/user/generate/${record.id}/backup`, null, { params })
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 /** 灵感画廊图片地址：本地相对路径拼 /img/，远程 URL 直接使用 */

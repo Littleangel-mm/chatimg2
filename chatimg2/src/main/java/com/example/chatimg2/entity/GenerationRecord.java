@@ -1,6 +1,7 @@
 package com.example.chatimg2.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -37,6 +38,11 @@ public class GenerationRecord {
     @JsonIgnore
     @Column(name = "remote_image_url", columnDefinition = "TEXT")
     private String remoteImageUrl;
+
+    @JsonProperty("remoteImageAvailable")
+    public boolean isRemoteImageAvailable() {
+        return remoteImageUrl != null && !remoteImageUrl.isBlank();
+    }
 
     @Column(name = "local_path", length = 500)
     private String localPath;
