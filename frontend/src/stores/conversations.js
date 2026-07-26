@@ -103,6 +103,11 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function touchConversation(conversation) {
+  const previous = Number(conversation?.updatedAt || 0)
+  conversation.updatedAt = Math.max(Date.now(), previous + 1)
+}
+
 function defaultTitle(prompt, type) {
   const text = (prompt || '').trim()
   if (text) return text.length > 28 ? `${text.slice(0, 28)}…` : text
@@ -272,7 +277,7 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   function mergeConversation(localConv, remoteConv) {
     if (!localConv) return remoteConv
-    const localIsNewer = (localConv.updatedAt || 0) > (remoteConv.updatedAt || 0)
+    const localIsNewer = (localConv.updatedAt || 0) >= (remoteConv.updatedAt || 0)
     return {
       ...(localIsNewer ? remoteConv : localConv),
       ...(localIsNewer ? localConv : remoteConv),
@@ -417,6 +422,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     const next = (title || '').trim()
     if (!next) return
     conv.title = next
+    touchConversation(conv)
     persist()
   }
 
@@ -426,6 +432,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     const nextType = type === 'img2img' ? 'img2img' : 'text2img'
     if (conv.type === nextType) return conv
     conv.type = nextType
+    touchConversation(conv)
     persist()
     return conv
   }
@@ -506,7 +513,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (conv.messages.length === 2) {
       conv.title = defaultTitle(prompt, type || conv.type)
     }
-    conv.updatedAt = Date.now()
+    touchConversation(conv)
     persist()
     return { userMsg, assistantMsg }
   }
