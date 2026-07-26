@@ -15,16 +15,19 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class ImageApiClientTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void preservesUrlPrecedenceForCompatibleResponses() {
+    void prefersAlreadyReturnedImageContentOverRemoteUrl() {
         ImageBackupService backupService = mock(ImageBackupService.class);
         ImageApiClient client = new ImageApiClient(backupService);
+        when(backupService.saveBase64("encoded-image")).thenReturn("temporary-image.png");
 
         ObjectNode result = new ObjectMapper().createObjectNode();
         result.put("url", "https://unreachable.example/image.png");
@@ -33,7 +36,21 @@ class ImageApiClientTest {
 
         String image = ReflectionTestUtils.invokeMethod(client, "extractImageFromDataArray", data);
 
-        assertThat(image).isEqualTo("https://unreachable.example/image.png");
+        assertThat(image).isEqualTo("temporary-image.png");
+        verify(backupService).saveBase64("encoded-image");
+    }
+
+    @Test
+    void usesRemoteUrlWhenResponseContainsNoImageContent() {
+        ImageBackupService backupService = mock(ImageBackupService.class);
+        ImageApiClient client = new ImageApiClient(backupService);
+        ObjectNode result = new ObjectMapper().createObjectNode();
+        result.put("url", "https://cdn.example/image.png");
+        ArrayNode data = new ObjectMapper().createArrayNode().add(result);
+
+        String image = ReflectionTestUtils.invokeMethod(client, "extractImageFromDataArray", data);
+
+        assertThat(image).isEqualTo("https://cdn.example/image.png");
         verifyNoInteractions(backupService);
     }
 

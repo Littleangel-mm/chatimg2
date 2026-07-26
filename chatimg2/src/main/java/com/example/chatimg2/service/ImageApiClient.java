@@ -16,7 +16,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -256,6 +258,7 @@ public class ImageApiClient {
                     }
                     throw error;
                 }
+                logResultShape(root);
                 return resolveImageFromJson(root);
             } catch (java.net.SocketTimeoutException e) {
                 ApiCallException error = createTransportException("生图 API 请求超时", e);
@@ -352,6 +355,7 @@ public class ImageApiClient {
                 log.info("Poll task {} attempt {} status={}", taskId, attempt, status);
 
                 if (status != null && isCompletedStatus(status)) {
+                    logResultShape(root);
                     String imageUrl = extractImageUrl(root);
                     if (imageUrl != null) {
                         return imageUrl;
@@ -395,8 +399,9 @@ public class ImageApiClient {
             if (fromResultImages != null) {
                 return fromResultImages;
             }
-            if (result.has("url")) {
-                return result.get("url").asText();
+            String fromResult = extractImageFromObject(result);
+            if (fromResult != null) {
+                return fromResult;
             }
         }
 
@@ -406,12 +411,13 @@ public class ImageApiClient {
             if (fromOutput != null) {
                 return fromOutput;
             }
-            if (output.has("url")) {
-                return output.get("url").asText();
+            String fromOutputObject = extractImageFromObject(output);
+            if (fromOutputObject != null) {
+                return fromOutputObject;
             }
         }
 
-        return null;
+        return extractImageFromObject(root);
     }
 
     private String extractImageFromDataArray(JsonNode array) {
@@ -422,13 +428,55 @@ public class ImageApiClient {
         if (first.isTextual()) {
             return first.asText();
         }
-        if (first.has("url")) {
-            return first.get("url").asText();
+        return extractImageFromObject(first);
+    }
+
+    private String extractImageFromObject(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
         }
-        if (first.has("b64_json")) {
-            return imageBackupService.saveBase64(first.get("b64_json").asText());
+        if (hasText(node, "b64_json")) {
+            log.info("Image API result selected: source=b64_json");
+            return imageBackupService.saveBase64(node.get("b64_json").asText());
+        }
+        if (hasText(node, "url")) {
+            String url = node.get("url").asText();
+            log.info("Image API result selected: source=url, host={}", urlHost(url));
+            return url;
         }
         return null;
+    }
+
+    private boolean hasText(JsonNode node, String field) {
+        return node.has(field) && node.get(field).isTextual() && !node.get(field).asText().isBlank();
+    }
+
+    private void logResultShape(JsonNode root) {
+        JsonNode dataFirst = root.path("data").isArray() && !root.path("data").isEmpty()
+                ? root.path("data").get(0)
+                : null;
+        log.info("Image API result shape: rootFields={}, dataFirstFields={}, resultFields={}, outputFields={}",
+                fieldNames(root), fieldNames(dataFirst), fieldNames(root.get("result")), fieldNames(root.get("output")));
+    }
+
+    private List<String> fieldNames(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        Iterator<String> fields = node.fieldNames();
+        fields.forEachRemaining(names::add);
+        names.sort(String::compareTo);
+        return names;
+    }
+
+    private String urlHost(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host == null || host.isBlank() ? "unknown" : host;
+        } catch (IllegalArgumentException e) {
+            return "invalid";
+        }
     }
 
     private String extractTaskId(JsonNode root) {
