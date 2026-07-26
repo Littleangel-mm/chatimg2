@@ -31,6 +31,8 @@ public class ImageApiClient {
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String DEFAULT_IMAGE_SIZE = "1024x1024";
+    private static final String PORTRAIT_IMAGE_SIZE = "1024x1536";
+    private static final String LANDSCAPE_IMAGE_SIZE = "1536x1024";
 
     @Value("${app.api.key}")
     private String apiKey;
@@ -107,11 +109,12 @@ public class ImageApiClient {
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
             try {
+                String size = resolveRequestedSize(prompt);
                 var body = new java.util.HashMap<String, Object>();
                 body.put("model", model);
                 body.put("prompt", prompt);
                 body.put("n", 1);
-                body.put("size", DEFAULT_IMAGE_SIZE);
+                body.put("size", size);
                 body.put("quality", "medium");
                 String jsonBody = objectMapper.writeValueAsString(body);
                 Request request = new Request.Builder()
@@ -121,7 +124,7 @@ public class ImageApiClient {
                         .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
                         .build();
 
-                log.info("Text2img trying model: {}, size={}, quality=medium", model, DEFAULT_IMAGE_SIZE);
+                log.info("Text2img trying model: {}, size={}, quality=medium", model, size);
                 return resolveImageFromSubmit(request);
             } catch (ApiCallException e) {
                 lastError = e;
@@ -170,6 +173,7 @@ public class ImageApiClient {
     }
 
     private String submitImageEdit(String prompt, byte[] imageBytes, String model) {
+        String size = resolveRequestedSize(prompt);
         RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse("image/png"));
         MultipartBody body = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -177,7 +181,7 @@ public class ImageApiClient {
                 .addFormDataPart("prompt", prompt)
                 .addFormDataPart("model", model)
                 .addFormDataPart("n", "1")
-                .addFormDataPart("size", DEFAULT_IMAGE_SIZE)
+                .addFormDataPart("size", size)
                 .build();
 
         Request request = new Request.Builder()
@@ -186,7 +190,7 @@ public class ImageApiClient {
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, mediaType=image/png, size={}", model, DEFAULT_IMAGE_SIZE);
+        log.info("Img2img using model: {}, mediaType=image/png, size={}", model, size);
         return resolveImageFromSubmit(request);
     }
 
@@ -217,6 +221,31 @@ public class ImageApiClient {
 
     private boolean isGptImageModel(String model) {
         return model != null && model.trim().startsWith("gpt-image");
+    }
+
+    private String resolveRequestedSize(String prompt) {
+        String normalized = (prompt == null ? "" : prompt)
+                .toLowerCase(java.util.Locale.ROOT)
+                .replace('：', ':')
+                .replace('／', '/')
+                .replace('×', 'x')
+                .replaceAll("\\s+", "");
+        if (containsAny(normalized, "9:16", "9/16", "3:4", "3/4", "竖屏", "竖版", "竖图", "portrait", "vertical")) {
+            return PORTRAIT_IMAGE_SIZE;
+        }
+        if (containsAny(normalized, "16:9", "16/9", "4:3", "4/3", "横屏", "横版", "横图", "landscape", "horizontal")) {
+            return LANDSCAPE_IMAGE_SIZE;
+        }
+        return DEFAULT_IMAGE_SIZE;
+    }
+
+    private boolean containsAny(String text, String... candidates) {
+        for (String candidate : candidates) {
+            if (text.contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String resolveImageFromSubmit(Request request) {

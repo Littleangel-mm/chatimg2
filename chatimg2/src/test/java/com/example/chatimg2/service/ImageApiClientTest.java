@@ -96,6 +96,69 @@ class ImageApiClientTest {
         }
     }
 
+    @Test
+    void recognizesFullWidthPortraitRatioInTextPrompt() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/generations", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            client.textToImage("古风少女，电影级光影，9：16", "gpt-image-2", List.of());
+
+            var json = objectMapper.readTree(captured.get().body());
+            assertThat(json.get("size").asText()).isEqualTo("1024x1536");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void recognizesFullWidthLandscapeRatioInImageEditPrompt() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            client.imageEdit("调整为电影横版，16：9", new byte[]{1, 2, 3}, "gpt-image-2");
+
+            assertThat(captured.get().body()).contains("1536x1024");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void mapsFullWidthFourByThreeToSupportedLandscapeSize() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/generations", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            client.textToImage("古风场景，4：3", "gpt-image-2", List.of());
+
+            var json = objectMapper.readTree(captured.get().body());
+            assertThat(json.get("size").asText()).isEqualTo("1536x1024");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void mapsFullWidthThreeByFourToSupportedPortraitSize() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/generations", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            client.textToImage("角色立绘，3：4", "gpt-image-2", List.of());
+
+            var json = objectMapper.readTree(captured.get().body());
+            assertThat(json.get("size").asText()).isEqualTo("1024x1536");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private ImageApiClient configuredClient(HttpServer server) {
         ImageApiClient client = new ImageApiClient(mock(ImageBackupService.class));
         ReflectionTestUtils.setField(client, "apiKey", "test-key");

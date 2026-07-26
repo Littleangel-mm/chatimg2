@@ -8,7 +8,6 @@ export function hasGenerationResult(record) {
 export function resolveGenerationStatus(record) {
   if (hasGenerationResult(record)) return 'completed'
   const status = String(record?.status || '').toLowerCase()
-  if (status === 'completed') return 'failed'
   if (status === 'failed') return 'failed'
   return 'processing'
 }
@@ -34,9 +33,6 @@ export function friendlyGenerationError(message, record = null) {
   const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
   if (record?.generationType === 'img2img' || rawApiError) {
     return '生成失败，请更换图片重试'
-  }
-  if (String(record?.status || '').toLowerCase() === 'completed' && !hasGenerationResult(record)) {
-    return '图片结果不可用，请重新生成'
   }
   return text || '生成失败'
 }
