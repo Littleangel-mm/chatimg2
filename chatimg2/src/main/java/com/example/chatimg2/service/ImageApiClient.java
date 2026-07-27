@@ -227,6 +227,7 @@ public class ImageApiClient {
         String normalized = (prompt == null ? "" : prompt)
                 .toLowerCase(java.util.Locale.ROOT)
                 .replace('：', ':')
+                .replace('∶', ':')
                 .replace('／', '/')
                 .replace('×', 'x')
                 .replaceAll("\\s+", "");

@@ -129,6 +129,21 @@ class ImageApiClientTest {
     }
 
     @Test
+    void recognizesRatioSymbolPortraitRatioInImageEditPrompt() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            client.imageEdit("realistic style, 9\u223616", new byte[]{1, 2, 3}, "gpt-image-2");
+
+            assertThat(captured.get().body()).contains("1024x1536");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void mapsFullWidthFourByThreeToSupportedLandscapeSize() throws Exception {
         AtomicReference<CapturedRequest> captured = new AtomicReference<>();
         HttpServer server = startServer("/v1/images/generations", captured);
