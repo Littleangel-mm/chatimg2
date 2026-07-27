@@ -19,4 +19,15 @@ class GenerationRecordSerializationTest {
         assertThat(json.has("remoteImageUrl")).isFalse();
         assertThat(json.toString()).doesNotContain("signature=secret");
     }
+
+    @Test
+    void exposesWhetherTheBackendCanStillRecoverTheGeneration() throws Exception {
+        GenerationRecord record = new GenerationRecord();
+        record.setStatus("failed");
+        record.setErrorMessage("生成任务中断，已退回积分，请重新生成");
+
+        JsonNode json = new ObjectMapper().readTree(new ObjectMapper().writeValueAsString(record));
+
+        assertThat(json.get("recoverable").asBoolean()).isTrue();
+    }
 }

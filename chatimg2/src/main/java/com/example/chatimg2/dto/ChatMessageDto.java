@@ -14,6 +14,7 @@ public class ChatMessageDto {
     private Boolean recordRemoteImageAvailable;
     private String recordTaskCode;
     private String recordGenerationType;
+    private Boolean recordRecoverable;
     private String status;
     private String errorMessage;
     private Long createdAt;

@@ -12,6 +12,15 @@ export function resolveGenerationStatus(record) {
   return 'processing'
 }
 
+export function isRecoverableGenerationFailure(record, errorMessage) {
+  if (hasGenerationResult(record)) return false
+  const status = String(record?.status || '').toLowerCase()
+  if (status !== 'failed') return false
+  if (record?.recoverable === true || record?.retryable === true) return true
+  const text = String(errorMessage || '')
+  return text.includes('生成任务中断') && text.includes('已退回积分')
+}
+
 export function extractPolicyAdvice(text) {
   if (!text) return ''
   const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)

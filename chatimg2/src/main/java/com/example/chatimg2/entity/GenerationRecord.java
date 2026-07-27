@@ -44,6 +44,17 @@ public class GenerationRecord {
         return remoteImageUrl != null && !remoteImageUrl.isBlank();
     }
 
+    @JsonProperty("recoverable")
+    public boolean isRecoverable() {
+        if ("processing".equals(status)) {
+            return true;
+        }
+        return "failed".equals(status)
+                && errorMessage != null
+                && errorMessage.contains("生成任务中断")
+                && errorMessage.contains("已退回积分");
+    }
+
     @Column(name = "generation_type", length = 20)
     private String generationType = "text2img";
 

@@ -12,7 +12,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.nio.file.Path;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -53,5 +56,20 @@ class GenerationRecoveryServiceTest {
         recoveryService.recoverOnStartup();
 
         verify(recordService).markLocalImageAvailable(206, imagePath);
+    }
+
+    @Test
+    void scheduledRecoveryNeverMarksRunningGenerationsAsInterrupted() {
+        when(recordRepository
+                .findTop50ByStatusAndImagePathIsNullAndErrorMessageContainingOrderByCreatedAtDesc(
+                        GenerationState.FAILED, "生成任务中断"))
+                .thenReturn(List.of());
+
+        recoveryService.recoverOnSchedule();
+
+        verify(recordRepository, never())
+                .findTop50ByStatusAndImagePathIsNullAndCreatedAtBeforeOrderByCreatedAtAsc(
+                        any(), any());
+        verifyNoInteractions(distributedLockService, recordService);
     }
 }

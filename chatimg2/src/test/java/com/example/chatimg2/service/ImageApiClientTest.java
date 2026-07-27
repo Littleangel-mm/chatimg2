@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -154,6 +155,45 @@ class ImageApiClientTest {
 
             var json = objectMapper.readTree(captured.get().body());
             assertThat(json.get("size").asText()).isEqualTo("1024x1536");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesWhenDistributorTemporarilyHasNoAvailableChannel() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/images/generations", exchange -> {
+            int attempt = requests.incrementAndGet();
+            String body;
+            int status;
+            if (attempt == 1) {
+                status = 503;
+                body = """
+                        {"error":{"code":"model_not_found","type":"new_api_error",
+                        "message":"No available channel for model gpt-image-2 under group GPT-Pro (distributor)"}}
+                        """;
+            } else {
+                status = 200;
+                body = "{\"data\":[{\"url\":\"https://cdn.example/result.png\"}]}";
+            }
+            byte[] response = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ImageApiClient client = configuredClient(server);
+            ReflectionTestUtils.setField(client, "submitMaxAttempts", 2);
+            ReflectionTestUtils.setField(client, "submitRetryDelayMs", 0L);
+
+            String result = client.textToImage("测试提示词", "gpt-image-2", List.of());
+
+            assertThat(result).isEqualTo("https://cdn.example/result.png");
+            assertThat(requests.get()).isEqualTo(2);
         } finally {
             server.stop(0);
         }

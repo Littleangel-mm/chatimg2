@@ -1,9 +1,15 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { normalizeImageUrl } from '../../api'
-import { extractPolicyAdvice, resolveGenerationStatus } from '../../utils/generation'
+import {
+  extractPolicyAdvice,
+  isRecoverableGenerationFailure,
+  resolveGenerationStatus
+} from '../../utils/generation'
 import ImageLightbox from '../ImageLightbox.vue'
+
+const RECOVERY_GRACE_MS = 3 * 60 * 1000
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -12,21 +18,73 @@ const props = defineProps({
 const convStore = useConversationsStore()
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
+const generationRecord = computed(() => props.message.record || {
+  status: props.message.status,
+  recoverable: props.message.recoverable,
+  retryable: props.message.retryable
+})
 const messageStatus = computed(() => {
-  return resolveGenerationStatus(props.message.record || { status: props.message.status })
+  return resolveGenerationStatus(generationRecord.value)
+})
+const backendError = computed(() => {
+  return props.message.errorMessage || props.message.record?.errorMessage || ''
+})
+const recoveryStartedAt = ref(0)
+const recoveryNow = ref(Date.now())
+let recoveryTimer = null
+
+const isRecoverableFailure = computed(() => {
+  return isRecoverableGenerationFailure(generationRecord.value, backendError.value)
+})
+const isRecoveryGrace = computed(() => {
+  return isRecoverableFailure.value && recoveryStartedAt.value > 0 &&
+    recoveryNow.value - recoveryStartedAt.value < RECOVERY_GRACE_MS
 })
 const isProcessing = computed(() => {
+  if (isRecoveryGrace.value) return true
   const status = messageStatus.value
   if (status === 'completed' || status === 'failed') return false
   return status === 'processing' || !status
 })
 const isFailed = computed(() => {
-  return messageStatus.value === 'failed'
+  return messageStatus.value === 'failed' && !isRecoveryGrace.value
 })
 const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
+const loadingText = computed(() => {
+  if (isRecoveryGrace.value) {
+    return '稍等一下，我马上就好，就快好了喵～'
+  }
+  return '正在认真画啦，再给我一点点时间喵～'
+})
 const previewImage = ref('')
+
+function stopRecoveryTimer() {
+  if (!recoveryTimer) return
+  window.clearInterval(recoveryTimer)
+  recoveryTimer = null
+}
+
+watch(isRecoverableFailure, recoverable => {
+  if (!recoverable) {
+    recoveryStartedAt.value = 0
+    stopRecoveryTimer()
+    return
+  }
+  if (!recoveryStartedAt.value) {
+    recoveryStartedAt.value = Date.now()
+  }
+  recoveryNow.value = Date.now()
+  if (!recoveryTimer) {
+    recoveryTimer = window.setInterval(() => {
+      recoveryNow.value = Date.now()
+      if (!isRecoveryGrace.value) stopRecoveryTimer()
+    }, 1000)
+  }
+}, { immediate: true })
+
+onUnmounted(stopRecoveryTimer)
 
 function openPreview(url) {
   if (url) previewImage.value = url
@@ -54,7 +112,7 @@ function openPreview(url) {
       <template v-else>
         <div v-if="isProcessing" class="assistant-loading">
           <span class="spin">⟳</span>
-          <span>我知道你很急，但是你先别急</span>
+          <span>{{ loadingText }}</span>
         </div>
         <div v-else-if="isFailed && isPolicyAdvice" class="assistant-advice">
           <p>{{ displayError }}</p>

@@ -609,7 +609,7 @@ public class ImageApiClient {
 
     private String getApiBaseUrl() {
         String baseUrl = apiUrl == null || apiUrl.isBlank()
-                ? "https://www.maitokens.com"
+                ? "https://wcf.maitokens.com"
                 : apiUrl.trim();
         while (baseUrl.endsWith("/")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
@@ -625,7 +625,7 @@ public class ImageApiClient {
 
     private String sanitizeBaseUrl(String value) {
         if (value == null || value.isBlank()) {
-            return "https://www.maitokens.com";
+            return "https://wcf.maitokens.com";
         }
         return value.trim();
     }

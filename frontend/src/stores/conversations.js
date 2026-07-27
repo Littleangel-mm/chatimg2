@@ -61,6 +61,7 @@ function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
     resolveGenerationStatus(msg.record || { status: msg.status }) !== nextStatus ||
     (current.imagePath || '') !== (record.imagePath || '') ||
     !!current.remoteImageAvailable !== !!record.remoteImageAvailable ||
+    !!current.recoverable !== !!record.recoverable ||
     (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
     (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
@@ -218,6 +219,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           remoteImageAvailable: !!msg.recordRemoteImageAvailable,
           taskCode: msg.recordTaskCode || null,
           generationType: msg.recordGenerationType || null,
+          recoverable: !!msg.recordRecoverable,
           errorMessage: msg.errorMessage || null
         } : null,
         status: msg.status || null,

@@ -221,6 +221,7 @@ public class ChatHistoryService {
             dto.setRecordRemoteImageAvailable(record.isRemoteImageAvailable());
             dto.setRecordTaskCode(record.getTaskCode());
             dto.setRecordGenerationType(record.getGenerationType());
+            dto.setRecordRecoverable(record.isRecoverable());
             dto.setStatus(record.getStatus());
             if (GenerationState.isFailed(record.getStatus())) {
                 dto.setErrorMessage(record.getErrorMessage());
