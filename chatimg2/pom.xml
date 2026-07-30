@@ -21,6 +21,13 @@
     </properties>
 
     <dependencies>
+        <!-- Video generation business module, packaged into this single application. -->
+        <dependency>
+            <groupId>com.example</groupId>
+            <artifactId>chatseedance2</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Spring Boot Web -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

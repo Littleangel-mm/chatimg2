@@ -3,11 +3,22 @@ package com.example.chatimg2;
 import com.example.chatimg2.config.DatabaseMigration;
 import io.github.cdimascio.dotenv.Dotenv;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication
+@SpringBootConfiguration
+@EnableAutoConfiguration
+@ComponentScan(basePackages = {"com.example.chatimg2", "com.example.chatseedance2"})
+@EntityScan(basePackages = {"com.example.chatimg2.entity", "com.example.chatseedance2.entity"})
+@EnableJpaRepositories(basePackages = {
+        "com.example.chatimg2.repository",
+        "com.example.chatseedance2.repository"
+})
 @EnableAsync
 @EnableScheduling
 public class Chatimg2Application {
