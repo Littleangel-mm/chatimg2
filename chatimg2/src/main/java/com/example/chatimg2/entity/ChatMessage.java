@@ -29,8 +29,14 @@ public class ChatMessage {
     @Column(name = "image_path", length = 500)
     private String imagePath;
 
+    @Column(name = "source_image_url", columnDefinition = "TEXT")
+    private String sourceImageUrl;
+
     @Column(name = "generation_record_id")
     private Integer generationRecordId;
+
+    @Column(name = "video_task_code", length = 40)
+    private String videoTaskCode;
 
     @Column(length = 50)
     private String intent;

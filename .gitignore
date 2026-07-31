@@ -33,4 +33,5 @@ img/upvideo/*
 # Legacy backend-module runtime image directory.
 chatimg2/img/
 chatseedance2/video-media/
+video-media/
 nul

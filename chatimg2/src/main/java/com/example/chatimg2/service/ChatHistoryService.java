@@ -12,11 +12,16 @@ import com.example.chatimg2.repository.ChatConversationRepository;
 import com.example.chatimg2.repository.ChatMessageRepository;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import com.example.chatimg2.repository.UserAccountRepository;
+import com.example.chatseedance2.dto.VideoGenerationResponse;
+import com.example.chatseedance2.entity.VideoGenerationTask;
+import com.example.chatseedance2.repository.VideoGenerationTaskRepository;
+import com.example.chatseedance2.service.VideoTaskMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -42,6 +47,8 @@ public class ChatHistoryService {
     private final UserAccountRepository userRepository;
     private final AuthService authService;
     private final GenerationRecordViewService recordViewService;
+    private final VideoGenerationTaskRepository videoTaskRepository;
+    private final VideoTaskMapper videoTaskMapper;
 
     @Transactional(readOnly = true)
     public ChatSyncResponse load(UserAccount user) {
@@ -51,6 +58,8 @@ public class ChatHistoryService {
         Map<Integer, List<ChatMessage>> messagesByConversation = new HashMap<>();
         Map<Integer, GenerationRecord> generationRecords = new HashMap<>();
         Map<String, GenerationRecord> generationRecordsByClientMessage = new HashMap<>();
+        Map<String, VideoGenerationTask> videoTasksByCode = new HashMap<>();
+        Map<String, VideoGenerationTask> videoTasksByClientMessage = new HashMap<>();
         if (!ids.isEmpty()) {
             List<ChatMessage> messages = messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(ids);
             for (ChatMessage message : messages) {
@@ -78,6 +87,21 @@ public class ChatHistoryService {
                         .findByUserIdAndClientMessageIdInOrderByCreatedAtDesc(user.getId(), assistantClientIds)
                         .forEach(record -> generationRecordsByClientMessage
                                 .putIfAbsent(record.getClientMessageId(), record));
+                videoTaskRepository
+                        .findByUserIdAndClientMessageIdInOrderByCreatedAtDesc(user.getId(), assistantClientIds)
+                        .forEach(task -> videoTasksByClientMessage
+                                .putIfAbsent(task.getClientMessageId(), task));
+            }
+            List<String> videoTaskCodes = messages.stream()
+                    .map(ChatMessage::getVideoTaskCode)
+                    .filter(java.util.Objects::nonNull)
+                    .filter(code -> !code.isBlank())
+                    .distinct()
+                    .toList();
+            if (!videoTaskCodes.isEmpty()) {
+                videoTaskRepository.findByTaskCodeIn(videoTaskCodes).stream()
+                        .filter(task -> user.getId().equals(task.getUserId()))
+                        .forEach(task -> videoTasksByCode.put(task.getTaskCode(), task));
             }
         }
 
@@ -91,7 +115,9 @@ public class ChatHistoryService {
                         conversation,
                         messagesByConversation.getOrDefault(conversation.getId(), List.of()),
                         generationRecords,
-                        generationRecordsByClientMessage))
+                        generationRecordsByClientMessage,
+                        videoTasksByCode,
+                        videoTasksByClientMessage))
                 .toList());
         response.setActiveId(response.getConversations().isEmpty() ? null : response.getConversations().get(0).getClientId());
         return response;
@@ -155,7 +181,7 @@ public class ChatHistoryService {
             }
             conversation = conversationRepository.save(conversation);
 
-            upsertMessages(conversation.getId(), dto.getMessages());
+            upsertMessages(conversation.getId(), dto.getMessages(), user.getId());
         }
 
         ChatSyncResponse response = load(user);
@@ -186,7 +212,9 @@ public class ChatHistoryService {
 
     private ChatConversationDto toDto(ChatConversation conversation, List<ChatMessage> messages,
                                       Map<Integer, GenerationRecord> generationRecords,
-                                      Map<String, GenerationRecord> generationRecordsByClientMessage) {
+                                      Map<String, GenerationRecord> generationRecordsByClientMessage,
+                                      Map<String, VideoGenerationTask> videoTasksByCode,
+                                      Map<String, VideoGenerationTask> videoTasksByClientMessage) {
         ChatConversationDto dto = new ChatConversationDto();
         dto.setClientId(conversation.getClientId());
         dto.setTitle(conversation.getTitle());
@@ -202,20 +230,37 @@ public class ChatHistoryService {
                     if (record == null && message.getClientId() != null) {
                         record = generationRecordsByClientMessage.get(message.getClientId());
                     }
-                    return toDto(message, record);
+                    VideoGenerationTask videoTask = message.getVideoTaskCode() == null
+                            ? null
+                            : videoTasksByCode.get(message.getVideoTaskCode());
+                    if (videoTask == null && message.getClientId() != null) {
+                        videoTask = videoTasksByClientMessage.get(message.getClientId());
+                    }
+                    return toDto(message, record, videoTask);
                 })
                 .toList());
         return dto;
     }
 
-    private ChatMessageDto toDto(ChatMessage message, GenerationRecord record) {
+    private ChatMessageDto toDto(ChatMessage message, GenerationRecord record, VideoGenerationTask videoTask) {
         ChatMessageDto dto = new ChatMessageDto();
         dto.setClientId(message.getClientId() != null ? message.getClientId() : String.valueOf(message.getId()));
         dto.setRole(message.getRole());
         dto.setContent(message.getContent());
-        dto.setSourceImage(message.getImagePath());
+        dto.setSourceImage(message.getSourceImageUrl() != null
+                ? message.getSourceImageUrl()
+                : message.getImagePath());
         dto.setRecordId(record != null ? record.getId() : message.getGenerationRecordId());
-        if (record != null) {
+        dto.setVideoTaskCode(message.getVideoTaskCode());
+        if (videoTask != null) {
+            VideoGenerationResponse response = videoTaskMapper.toResponse(videoTask);
+            dto.setVideoTaskCode(videoTask.getTaskCode());
+            dto.setVideoTask(response);
+            dto.setStatus(response.status());
+            if ("failed".equals(response.status())) {
+                dto.setErrorMessage(response.errorMessage());
+            }
+        } else if (record != null) {
             dto.setRecordImagePath(recordViewService.resolveImagePath(record));
             dto.setRecordSourceImagePath(record.getSourceImagePath());
             dto.setRecordRemoteImageAvailable(record.isRemoteImageAvailable());
@@ -236,7 +281,7 @@ public class ChatHistoryService {
         return dto;
     }
 
-    private void upsertMessages(Integer conversationId, List<ChatMessageDto> dtos) {
+    private void upsertMessages(Integer conversationId, List<ChatMessageDto> dtos, Integer userId) {
         if (dtos == null || dtos.isEmpty()) {
             return;
         }
@@ -276,12 +321,20 @@ public class ChatHistoryService {
                     message.setIntent(dto.getStatus());
                 }
             }
-            String sourceImage = safeImagePath(dto.getSourceImage());
-            if (sourceImage != null || message.getImagePath() == null) {
-                message.setImagePath(sourceImage);
+            String sourceImageUrl = safeSourceImageUrl(dto.getSourceImage());
+            String sourceImagePath = sourceImageUrl == null ? safeImagePath(dto.getSourceImage()) : null;
+            if (sourceImageUrl != null) {
+                message.setSourceImageUrl(sourceImageUrl);
+            } else if (sourceImagePath != null) {
+                message.setImagePath(sourceImagePath);
             }
             if (message.getGenerationRecordId() == null && dto.getRecordId() != null) {
                 message.setGenerationRecordId(dto.getRecordId());
+            }
+            String videoTaskCode = safeVideoTaskCode(dto.getVideoTaskCode());
+            if (message.getVideoTaskCode() == null && videoTaskCode != null
+                    && videoTaskRepository.existsByTaskCodeAndUserId(videoTaskCode, userId)) {
+                message.setVideoTaskCode(videoTaskCode);
             }
             if (message.getCreatedAt() == null) {
                 message.setCreatedAt(fromMillis(dto.getCreatedAt()));
@@ -363,7 +416,10 @@ public class ChatHistoryService {
     }
 
     private String resolveType(String type) {
-        return "img2img".equals(type) ? "img2img" : "text2img";
+        if ("img2img".equals(type) || "text2video".equals(type) || "image2video".equals(type)) {
+            return type;
+        }
+        return "text2img";
     }
 
     private String resolveRole(String role) {
@@ -380,7 +436,37 @@ public class ChatHistoryService {
         if (imagePath.startsWith("data:")) {
             return null;
         }
+        if (imagePath.regionMatches(true, 0, "http://", 0, 7)
+                || imagePath.regionMatches(true, 0, "https://", 0, 8)) {
+            return null;
+        }
         return imagePath.length() > 500 ? null : imagePath;
+    }
+
+    private String safeSourceImageUrl(String sourceImage) {
+        if (sourceImage == null || sourceImage.isBlank()) {
+            return null;
+        }
+        String value = sourceImage.trim();
+        if (value.length() > 4000) {
+            return null;
+        }
+        try {
+            URI uri = URI.create(value);
+            boolean http = "http".equalsIgnoreCase(uri.getScheme())
+                    || "https".equalsIgnoreCase(uri.getScheme());
+            return http && uri.getHost() != null ? value : null;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private String safeVideoTaskCode(String taskCode) {
+        if (taskCode == null || taskCode.isBlank()) {
+            return null;
+        }
+        String value = taskCode.trim();
+        return value.length() <= 40 && value.matches("[A-Za-z0-9_-]+") ? value : null;
     }
 
     private LocalDateTime fromMillis(Long millis) {

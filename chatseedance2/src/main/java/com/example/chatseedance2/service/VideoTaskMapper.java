@@ -30,6 +30,7 @@ public class VideoTaskMapper {
                 : task.getReservedCredits();
         return new VideoGenerationResponse(
                 task.getTaskCode(),
+                task.getClientMessageId(),
                 publicStatus,
                 task.getStatus().name().toLowerCase(),
                 !terminal,

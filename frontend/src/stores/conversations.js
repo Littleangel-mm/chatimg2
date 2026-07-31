@@ -27,6 +27,15 @@ function hasAuthToken() {
   return !!localStorage.getItem('authToken')
 }
 
+function isVideoType(type) {
+  return type === 'text2video' || type === 'image2video'
+}
+
+function normalizeConversationType(type) {
+  if (type === 'img2img' || isVideoType(type)) return type
+  return 'text2img'
+}
+
 function recordIdEquals(a, b) {
   return Number(a) === Number(b)
 }
@@ -41,6 +50,7 @@ function recordForMessage(record, status, errorMessage) {
 
 function messageStatusForSync(msg) {
   if (msg?.role !== 'assistant') return null
+  if (msg.videoTask) return msg.videoTask.status || msg.status || null
   return resolveGenerationStatus(msg.record || { status: msg.status })
 }
 
@@ -67,6 +77,7 @@ function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
 }
 
 function recordMatchesConversation(record, conv, userMsg = null) {
+  if (isVideoType(conv?.type)) return false
   const type = record?.generationType === 'img2img' ? 'img2img' : 'text2img'
   const expectedType = userMsg?.sourceImage ? 'img2img' : (conv?.type || 'text2img')
   return type === expectedType
@@ -112,6 +123,8 @@ function touchConversation(conversation) {
 function defaultTitle(prompt, type) {
   const text = (prompt || '').trim()
   if (text) return text.length > 28 ? `${text.slice(0, 28)}…` : text
+  if (type === 'image2video') return '图生视频对话'
+  if (type === 'text2video') return '文生视频对话'
   return type === 'img2img' ? '图生图对话' : '文生图对话'
 }
 
@@ -190,6 +203,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           content: msg.content || '',
           sourceImage: msg.sourceImage && !msg.sourceImage.startsWith('data:') ? msg.sourceImage : null,
           recordId: msg.recordId || msg.record?.id || null,
+          videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
           status: messageStatusForSync(msg),
           errorMessage: messageErrorForSync(msg),
           createdAt: msg.createdAt
@@ -202,7 +216,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     const materialized = {
       id: conv.clientId || uid(),
       title: conv.title || defaultTitle('', conv.type),
-      type: conv.type === 'img2img' ? 'img2img' : 'text2img',
+      type: normalizeConversationType(conv.type),
       createdAt: conv.createdAt || Date.now(),
       updatedAt: conv.updatedAt || Date.now(),
       messages: (conv.messages || []).map(msg => ({
@@ -222,6 +236,8 @@ export const useConversationsStore = defineStore('conversations', () => {
           recoverable: !!msg.recordRecoverable,
           errorMessage: msg.errorMessage || null
         } : null,
+        videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
+        videoTask: msg.videoTask || null,
         status: msg.status || null,
         errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
         createdAt: msg.createdAt || Date.now()
@@ -247,7 +263,8 @@ export const useConversationsStore = defineStore('conversations', () => {
         ...remoteMsg,
         ...localMsg,
         sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
-        record: localMsg.record || remoteMsg.record || null
+        record: localMsg.record || remoteMsg.record || null,
+        videoTask: localMsg.videoTask || remoteMsg.videoTask || null
       }
     }
     const remoteHasResult = remoteStatus === 'completed' || remoteStatus === 'failed' || !!remoteMsg.recordId
@@ -256,14 +273,16 @@ export const useConversationsStore = defineStore('conversations', () => {
         ...localMsg,
         ...remoteMsg,
         sourceImage: remoteMsg.sourceImage || localMsg.sourceImage || null,
-        record: remoteMsg.record || localMsg.record || null
+        record: remoteMsg.record || localMsg.record || null,
+        videoTask: remoteMsg.videoTask || localMsg.videoTask || null
       }
     }
     return {
       ...remoteMsg,
       ...localMsg,
       sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
-      record: localMsg.record || remoteMsg.record || null
+      record: localMsg.record || remoteMsg.record || null,
+      videoTask: localMsg.videoTask || remoteMsg.videoTask || null
     }
   }
 
@@ -399,10 +418,17 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function createConversation(type = 'text2img') {
+    const normalizedType = normalizeConversationType(type)
     const conv = {
       id: uid(),
-      title: type === 'img2img' ? '新图生图' : '新对话',
-      type,
+      title: normalizedType === 'img2img'
+        ? '新图生图'
+        : normalizedType === 'image2video'
+          ? '新图生视频'
+          : normalizedType === 'text2video'
+            ? '新视频'
+            : '新对话',
+      type: normalizedType,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: []
@@ -431,7 +457,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   function setConversationType(id, type) {
     const conv = conversations.value.find(c => c.id === id)
     if (!conv) return null
-    const nextType = type === 'img2img' ? 'img2img' : 'text2img'
+    const nextType = normalizeConversationType(type)
     if (conv.type === nextType) return conv
     conv.type = nextType
     touchConversation(conv)
@@ -629,6 +655,81 @@ export const useConversationsStore = defineStore('conversations', () => {
     return true
   }
 
+  function attachVideoTaskToMessage(messageId, task) {
+    if (!messageId || !task?.taskCode) return false
+    const conv = conversations.value.find(c => c.messages.some(message => message.id === messageId))
+    if (!conv) return false
+    const message = conv.messages.find(item => item.id === messageId && item.role === 'assistant')
+    if (!message) return false
+    message.videoTaskCode = task.taskCode
+    message.videoTask = task
+    message.status = task.status || 'processing'
+    message.errorMessage = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+    touchConversation(conv)
+    persist()
+    return true
+  }
+
+  function syncVideoTask(task) {
+    if (!task?.taskCode) return false
+    let changed = false
+    for (const conv of conversations.value) {
+      let conversationChanged = false
+      for (const message of conv.messages || []) {
+        if (message.role !== 'assistant') continue
+        const matchesCode = message.videoTaskCode === task.taskCode || message.videoTask?.taskCode === task.taskCode
+        const matchesClient = !message.videoTaskCode && task.clientMessageId && message.id === task.clientMessageId
+        if (!matchesCode && !matchesClient) continue
+        const previous = message.videoTask || {}
+        const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+        if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+            JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
+            (message.errorMessage || null) !== nextError) {
+          message.videoTaskCode = task.taskCode
+          message.videoTask = task
+          message.status = task.status || 'processing'
+          message.errorMessage = nextError
+          changed = true
+          conversationChanged = true
+        }
+      }
+      if (conversationChanged) touchConversation(conv)
+    }
+    if (changed) persist()
+    return changed
+  }
+
+  function syncVideoTasks(tasks) {
+    let changed = false
+    for (const task of tasks || []) {
+      if (!task?.taskCode) continue
+      for (const conv of conversations.value) {
+        let conversationChanged = false
+        for (const message of conv.messages || []) {
+          if (message.role !== 'assistant') continue
+          const matchesCode = message.videoTaskCode === task.taskCode || message.videoTask?.taskCode === task.taskCode
+          const matchesClient = !message.videoTaskCode && task.clientMessageId && message.id === task.clientMessageId
+          if (!matchesCode && !matchesClient) continue
+          const previous = message.videoTask || {}
+          const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+          if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+              JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
+              (message.errorMessage || null) !== nextError) {
+            message.videoTaskCode = task.taskCode
+            message.videoTask = task
+            message.status = task.status || 'processing'
+            message.errorMessage = nextError
+            changed = true
+            conversationChanged = true
+          }
+        }
+        if (conversationChanged) touchConversation(conv)
+      }
+    }
+    if (changed) persist()
+    return changed
+  }
+
   function failAssistantForRecord(recordId, errorMessage) {
     errorMessage = friendlyGenerationError(errorMessage)
     let changed = false
@@ -733,6 +834,20 @@ export const useConversationsStore = defineStore('conversations', () => {
     persist()
   }
 
+  function failAssistantMessage(messageId, errorMessage) {
+    if (!messageId) return false
+    for (const conv of conversations.value) {
+      const message = (conv.messages || []).find(item => item.id === messageId && item.role === 'assistant')
+      if (!message) continue
+      message.status = 'failed'
+      message.errorMessage = friendlyGenerationError(errorMessage) || '生成失败'
+      touchConversation(conv)
+      persist()
+      return true
+    }
+    return false
+  }
+
   function importFromHistory(history, keyCode) {
     bindKeyCode(keyCode)
     if (conversations.value.length > 0 || !history?.length) return
@@ -808,9 +923,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     addExchange,
     syncRecord,
     attachRecordToMessage,
+    attachVideoTaskToMessage,
     failLatestAssistant,
+    failAssistantMessage,
     failAssistantForRecord,
     syncFromHistoryRecords,
+    syncVideoTask,
+    syncVideoTasks,
     importFromHistory,
     imageUrlForMessage,
     setPendingPrompt,

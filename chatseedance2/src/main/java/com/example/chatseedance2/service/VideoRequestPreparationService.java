@@ -59,7 +59,7 @@ public class VideoRequestPreparationService {
                 sourceUrl = storageService.requireOwnedPublicUrl(localPath, user);
             }
             if (!isHttpUrl(sourceUrl)) {
-                throw new BusinessException("ASSET_URL_INVALID", "素材必须提供服务器可下载的 HTTP 地址");
+                throw new BusinessException("ASSET_URL_INVALID", "请输入供应商可直接下载的公网 HTTP 图片地址");
             }
             assets.add(new PreparedVideoRequest.Asset(
                     input.mediaType(), input.role(), sourceUrl, localPath,

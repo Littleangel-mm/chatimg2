@@ -6,6 +6,7 @@ import java.util.List;
 
 public record VideoGenerationResponse(
         String taskCode,
+        String clientMessageId,
         String status,
         String detailStatus,
         boolean recoverable,

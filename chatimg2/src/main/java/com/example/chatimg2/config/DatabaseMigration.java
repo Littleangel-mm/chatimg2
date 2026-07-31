@@ -145,6 +145,7 @@ public final class DatabaseMigration {
                     "role VARCHAR(20) NOT NULL, " +
                     "content TEXT, " +
                     "image_path VARCHAR(500), " +
+                    "source_image_url TEXT, " +
                     "generation_record_id INTEGER, " +
                     "intent VARCHAR(50), " +
                     "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
@@ -152,7 +153,10 @@ public final class DatabaseMigration {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_id ON chat_messages(conversation_id)");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)");
             stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_id VARCHAR(120)");
+            stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS video_task_code VARCHAR(40)");
+            stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS source_image_url TEXT");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_client_id ON chat_messages(conversation_id, client_id)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_video_task_code ON chat_messages(video_task_code)");
 
             log.info("Database migration completed (auth, generation_records.*, distributed_locks, activation_keys.*, inspiration_prompts, chat_*)");
         } catch (SQLException e) {

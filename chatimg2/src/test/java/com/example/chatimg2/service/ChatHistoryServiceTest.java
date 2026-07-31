@@ -11,6 +11,10 @@ import com.example.chatimg2.repository.ChatConversationRepository;
 import com.example.chatimg2.repository.ChatMessageRepository;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import com.example.chatimg2.repository.UserAccountRepository;
+import com.example.chatseedance2.repository.VideoGenerationTaskRepository;
+import com.example.chatseedance2.service.VideoTaskMapper;
+import com.example.chatseedance2.dto.VideoGenerationResponse;
+import com.example.chatseedance2.entity.VideoGenerationTask;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -24,6 +28,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -49,6 +54,12 @@ class ChatHistoryServiceTest {
 
     @Mock
     private AuthService authService;
+
+    @Mock
+    private VideoGenerationTaskRepository videoTaskRepository;
+
+    @Mock
+    private VideoTaskMapper videoTaskMapper;
 
     @InjectMocks
     private ChatHistoryService chatHistoryService;
@@ -101,7 +112,7 @@ class ChatHistoryServiceTest {
 
         ChatMessageDto stale = messageDto("assistant-1", "processing", null, null);
         stale.setContent("");
-        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(stale));
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(stale), 7);
 
         assertEquals("completed", existing.getIntent());
         assertEquals(91, existing.getGenerationRecordId());
@@ -116,7 +127,7 @@ class ChatHistoryServiceTest {
         when(messageRepository.findByConversationId(31)).thenReturn(List.of(existing));
 
         ChatMessageDto completed = messageDto("assistant-1", "completed", 92, "sources/user/reference.png");
-        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(completed));
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(completed), 7);
 
         assertEquals("completed", existing.getIntent());
         assertEquals(92, existing.getGenerationRecordId());
@@ -131,7 +142,7 @@ class ChatHistoryServiceTest {
 
         ChatMessageDto stale = messageDto("assistant-1", "completed", 93, null);
         stale.setContent("stale completed result");
-        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(stale));
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(stale), 7);
 
         assertEquals("failed", existing.getIntent());
         assertEquals(92, existing.getGenerationRecordId());
@@ -144,7 +155,7 @@ class ChatHistoryServiceTest {
         ChatMessageDto first = messageDto("assistant-1", "processing", null, null);
         ChatMessageDto duplicate = messageDto("assistant-1", "processing", null, null);
 
-        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(first, duplicate));
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(first, duplicate), 7);
 
         verify(messageRepository).saveAll(org.mockito.ArgumentMatchers.argThat(messages ->
                 java.util.stream.StreamSupport.stream(messages.spliterator(), false).count() == 1));
@@ -251,6 +262,136 @@ class ChatHistoryServiceTest {
     }
 
     @Test
+    void loadAttachesOwnedVideoTaskByStoredTaskCode() {
+        UserAccount user = user(7, "user@qq.com");
+        ChatConversation conversation = conversation(31, 7, "video-conversation");
+        conversation.setCreatedAt(LocalDateTime.now().minusMinutes(2));
+        conversation.setUpdatedAt(LocalDateTime.now());
+        ChatMessage message = message("assistant-video-1", "processing", null, null);
+        message.setVideoTaskCode("VIDEO-101");
+        VideoGenerationTask task = videoTask(101L, 7, "VIDEO-101", "assistant-video-1");
+        VideoGenerationResponse mapped = videoResponse("VIDEO-101", "completed");
+
+        when(conversationRepository.findByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(7))
+                .thenReturn(List.of(conversation));
+        when(messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(List.of(31)))
+                .thenReturn(List.of(message));
+        when(videoTaskRepository.findByTaskCodeIn(List.of("VIDEO-101"))).thenReturn(List.of(task));
+        when(videoTaskMapper.toResponse(task)).thenReturn(mapped);
+
+        ChatMessageDto dto = chatHistoryService.load(user)
+                .getConversations().get(0).getMessages().get(0);
+
+        assertEquals("VIDEO-101", dto.getVideoTaskCode());
+        assertEquals(mapped, dto.getVideoTask());
+        assertEquals("completed", dto.getStatus());
+    }
+
+    @Test
+    void loadRecoversOwnedVideoTaskByAssistantClientId() {
+        UserAccount user = user(7, "user@qq.com");
+        ChatConversation conversation = conversation(31, 7, "video-conversation");
+        conversation.setCreatedAt(LocalDateTime.now().minusMinutes(2));
+        conversation.setUpdatedAt(LocalDateTime.now());
+        ChatMessage message = message("assistant-video-2", "processing", null, null);
+        VideoGenerationTask task = videoTask(102L, 7, "VIDEO-102", "assistant-video-2");
+        VideoGenerationResponse mapped = videoResponse("VIDEO-102", "processing");
+
+        when(conversationRepository.findByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(7))
+                .thenReturn(List.of(conversation));
+        when(messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(List.of(31)))
+                .thenReturn(List.of(message));
+        when(videoTaskRepository.findByUserIdAndClientMessageIdInOrderByCreatedAtDesc(
+                7, List.of("assistant-video-2"))).thenReturn(List.of(task));
+        when(videoTaskMapper.toResponse(task)).thenReturn(mapped);
+
+        ChatMessageDto dto = chatHistoryService.load(user)
+                .getConversations().get(0).getMessages().get(0);
+
+        assertEquals("VIDEO-102", dto.getVideoTaskCode());
+        assertEquals(mapped, dto.getVideoTask());
+    }
+
+    @Test
+    void loadNeverExposesAnotherUsersVideoTask() {
+        UserAccount user = user(7, "user@qq.com");
+        ChatConversation conversation = conversation(31, 7, "video-conversation");
+        conversation.setCreatedAt(LocalDateTime.now().minusMinutes(2));
+        conversation.setUpdatedAt(LocalDateTime.now());
+        ChatMessage message = message("assistant-video-3", "processing", null, null);
+        message.setVideoTaskCode("VIDEO-OTHER");
+        VideoGenerationTask otherUsersTask = videoTask(103L, 8, "VIDEO-OTHER", "assistant-video-3");
+
+        when(conversationRepository.findByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(7))
+                .thenReturn(List.of(conversation));
+        when(messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(List.of(31)))
+                .thenReturn(List.of(message));
+        when(videoTaskRepository.findByTaskCodeIn(List.of("VIDEO-OTHER")))
+                .thenReturn(List.of(otherUsersTask));
+
+        ChatMessageDto dto = chatHistoryService.load(user)
+                .getConversations().get(0).getMessages().get(0);
+
+        assertNull(dto.getVideoTask());
+        verify(videoTaskMapper, never()).toResponse(otherUsersTask);
+    }
+
+    @Test
+    void syncDoesNotStoreAnotherUsersVideoTaskCode() {
+        when(messageRepository.findByConversationId(31)).thenReturn(List.of());
+        ChatMessageDto incoming = messageDto("assistant-video-4", "processing", null, null);
+        incoming.setVideoTaskCode("VIDEO-OTHER");
+        when(videoTaskRepository.existsByTaskCodeAndUserId("VIDEO-OTHER", 7)).thenReturn(false);
+
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(incoming), 7);
+
+        verify(messageRepository).saveAll(org.mockito.ArgumentMatchers.argThat(messages -> {
+            ChatMessage saved = messages.iterator().next();
+            return saved.getVideoTaskCode() == null;
+        }));
+    }
+
+    @Test
+    void syncStoresExternalReferenceInDedicatedUrlColumn() {
+        when(messageRepository.findByConversationId(31)).thenReturn(List.of());
+        ChatMessageDto incoming = new ChatMessageDto();
+        incoming.setClientId("user-video-url");
+        incoming.setRole("user");
+        incoming.setContent("animate this image");
+        incoming.setSourceImage("https://images.example.com/public/reference.png?token=abc");
+        incoming.setCreatedAt(System.currentTimeMillis());
+
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(incoming), 7);
+
+        verify(messageRepository).saveAll(org.mockito.ArgumentMatchers.argThat(messages -> {
+            ChatMessage saved = messages.iterator().next();
+            return "https://images.example.com/public/reference.png?token=abc"
+                    .equals(saved.getSourceImageUrl()) && saved.getImagePath() == null;
+        }));
+    }
+
+    @Test
+    void loadReturnsExternalReferenceUrlForConversationRefresh() {
+        UserAccount user = user(7, "user@qq.com");
+        ChatConversation conversation = conversation(31, 7, "video-url-conversation");
+        conversation.setCreatedAt(LocalDateTime.now().minusMinutes(2));
+        conversation.setUpdatedAt(LocalDateTime.now());
+        ChatMessage message = message("user-video-url", null, null, "legacy/local.png");
+        message.setRole("user");
+        message.setSourceImageUrl("https://images.example.com/public/reference.png");
+
+        when(conversationRepository.findByUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(7))
+                .thenReturn(List.of(conversation));
+        when(messageRepository.findByConversationIdInOrderByCreatedAtAscIdAsc(List.of(31)))
+                .thenReturn(List.of(message));
+
+        ChatMessageDto dto = chatHistoryService.load(user)
+                .getConversations().get(0).getMessages().get(0);
+
+        assertEquals("https://images.example.com/public/reference.png", dto.getSourceImage());
+    }
+
+    @Test
     void loadIncludesDeletionTombstonesForOtherDevices() {
         UserAccount user = user(7, "user@qq.com");
         ChatConversation deleted = conversation(32, 7, "deleted-client");
@@ -305,5 +446,22 @@ class ChatHistoryServiceTest {
         dto.setSourceImage(sourceImage);
         dto.setCreatedAt(System.currentTimeMillis());
         return dto;
+    }
+
+    private VideoGenerationTask videoTask(long id, int userId, String taskCode, String clientMessageId) {
+        VideoGenerationTask task = new VideoGenerationTask();
+        task.setId(id);
+        task.setUserId(userId);
+        task.setTaskCode(taskCode);
+        task.setClientMessageId(clientMessageId);
+        return task;
+    }
+
+    private VideoGenerationResponse videoResponse(String taskCode, String status) {
+        return new VideoGenerationResponse(
+                taskCode, "assistant-video", status, status, !"completed".equals(status), "mm2-seedance2.0",
+                "text_to_video", "prompt", 5, "16:9", "720p", 10, null,
+                List.of("/video-media/results/result.mp4"), null, null, null,
+                LocalDateTime.now(), "completed".equals(status) ? LocalDateTime.now() : null);
     }
 }

@@ -22,6 +22,13 @@ public interface VideoGenerationTaskRepository extends JpaRepository<VideoGenera
 
     Optional<VideoGenerationTask> findByTaskCode(String taskCode);
 
+    List<VideoGenerationTask> findByTaskCodeIn(Collection<String> taskCodes);
+
+    List<VideoGenerationTask> findByUserIdAndClientMessageIdInOrderByCreatedAtDesc(
+            Integer userId, Collection<String> clientMessageIds);
+
+    boolean existsByTaskCodeAndUserId(String taskCode, Integer userId);
+
     @Query("select task.id from VideoGenerationTask task where task.taskCode = :taskCode")
     Optional<Long> findIdByTaskCode(@Param("taskCode") String taskCode);
 
