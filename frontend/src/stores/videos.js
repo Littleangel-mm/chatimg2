@@ -8,15 +8,14 @@ const FALLBACK_MODEL = {
   category: 'video',
   flowTypes: [],
   inputKeys: [],
-  costPerSecond: null
+  costPerSecond: 100
 }
+
+const SUPPORTED_MODEL_ID = FALLBACK_MODEL.id
 
 function preferredModels(data) {
   if (!Array.isArray(data)) return []
-  return data.filter(item => {
-    const identity = `${item?.id || ''} ${item?.name || ''}`.toLowerCase()
-    return identity.includes('grok') || identity.includes('seedance')
-  })
+  return data.filter(item => item?.id === SUPPORTED_MODEL_ID)
 }
 
 function unwrap(response) {

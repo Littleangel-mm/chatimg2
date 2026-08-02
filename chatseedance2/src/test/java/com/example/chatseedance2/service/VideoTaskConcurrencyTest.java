@@ -75,7 +75,7 @@ class VideoTaskConcurrencyTest {
             assertThat(results).extracting(result -> result.task().getId()).containsOnly(
                     results.get(0).task().getId());
             assertThat(taskRepository.count()).isEqualTo(1);
-            assertThat(userRepository.findById(user.getId()).orElseThrow().getUsedCredits()).isEqualTo(68);
+            assertThat(userRepository.findById(user.getId()).orElseThrow().getUsedCredits()).isEqualTo(400);
         } finally {
             pool.shutdownNow();
         }
@@ -94,7 +94,7 @@ class VideoTaskConcurrencyTest {
         assertThat(second.created()).isFalse();
         assertThat(second.task().getId()).isEqualTo(first.task().getId());
         assertThat(taskRepository.count()).isEqualTo(1);
-        assertThat(userRepository.findById(user.getId()).orElseThrow().getUsedCredits()).isEqualTo(68);
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getUsedCredits()).isEqualTo(400);
     }
 
     @Test
@@ -128,6 +128,23 @@ class VideoTaskConcurrencyTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         generationService.getForUser(stranger, task.getTaskCode()))
                 .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void providerCostDoesNotChangeFixedUserCreditPrice() {
+        UserAccount user = createUser("fixed-price@example.com");
+        VideoGenerationTask task = recordService.create(
+                user, prepared("fixed-price-message", "fixed-price-fingerprint"), quote()).task();
+
+        recordService.complete(task.getId(), new com.example.chatseedance2.service.provider.ProviderTaskSnapshot(
+                "provider-task", "completed", "mm2-seedance2.0", "text-to-video",
+                new BigDecimal("17"), List.of("https://example.com/result.mp4"), null, Map.of()));
+
+        VideoGenerationTask completed = taskRepository.findById(task.getId()).orElseThrow();
+        assertThat(completed.getReservedCredits()).isEqualTo(400);
+        assertThat(completed.getChargedCredits()).isEqualTo(400);
+        assertThat(completed.getProviderCost()).isEqualByComparingTo("17");
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getUsedCredits()).isEqualTo(400);
     }
 
     private UserAccount createUser(String email) {
@@ -166,7 +183,7 @@ class VideoTaskConcurrencyTest {
                 "video",
                 List.of("text-to-video"),
                 List.of("prompt"),
-                new BigDecimal("17")), 68);
+                new BigDecimal("17")), 400);
     }
 
     private <T> T get(Future<T> future) {

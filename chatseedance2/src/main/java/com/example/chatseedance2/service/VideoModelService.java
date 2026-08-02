@@ -9,13 +9,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class VideoModelService {
+
+    public static final String SUPPORTED_MODEL_ID = "mm2-seedance2.0";
+    public static final BigDecimal USER_CREDITS_PER_SECOND = BigDecimal.valueOf(100);
 
     private final BagegeVideoApiClient apiClient;
     private final SeedanceApiProperties properties;
@@ -24,17 +26,21 @@ public class VideoModelService {
 
     public List<VideoModelResponse> listVideoModels() {
         return models().stream()
+                .filter(model -> SUPPORTED_MODEL_ID.equals(model.id()))
                 .filter(ProviderModel::supportsVideo)
                 .map(model -> new VideoModelResponse(
                         model.id(), model.name(), model.category(),
-                        model.flowTypes(), model.inputKeys(), model.cost()))
+                        model.flowTypes(), model.inputKeys(), USER_CREDITS_PER_SECOND))
                 .toList();
     }
 
     public Quote quote(String requestedModel, int durationSeconds) {
         String modelId = requestedModel == null || requestedModel.isBlank()
-                ? properties.model()
+                ? SUPPORTED_MODEL_ID
                 : requestedModel.trim();
+        if (!SUPPORTED_MODEL_ID.equals(modelId)) {
+            throw new BusinessException("MODEL_NOT_ALLOWED", "当前仅支持 Seedance 2.0 模型");
+        }
         ProviderModel model = models().stream()
                 .filter(item -> modelId.equals(item.id()))
                 .findFirst()
@@ -42,11 +48,7 @@ public class VideoModelService {
         if (!model.supportsVideo()) {
             throw new BusinessException("MODEL_NOT_VIDEO", "所选模型不支持视频生成");
         }
-        if (model.cost() == null || model.cost().signum() <= 0) {
-            throw new BusinessException("MODEL_PRICE_UNAVAILABLE", "暂时无法获取模型价格，请稍后重试");
-        }
-        int credits = model.cost().multiply(BigDecimal.valueOf(durationSeconds))
-                .setScale(0, RoundingMode.CEILING).intValueExact();
+        int credits = Math.multiplyExact(USER_CREDITS_PER_SECOND.intValueExact(), durationSeconds);
         return new Quote(model, credits);
     }
 

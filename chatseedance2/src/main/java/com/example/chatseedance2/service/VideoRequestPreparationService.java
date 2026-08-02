@@ -1,6 +1,5 @@
 package com.example.chatseedance2.service;
 
-import com.example.chatseedance2.config.SeedanceApiProperties;
 import com.example.chatseedance2.dto.VideoAssetInput;
 import com.example.chatseedance2.dto.VideoGenerationRequest;
 import com.example.chatseedance2.entity.UserAccount;
@@ -28,11 +27,9 @@ public class VideoRequestPreparationService {
 
     private final VideoStorageService storageService;
     private final ObjectMapper objectMapper;
-    private final SeedanceApiProperties properties;
-
     public PreparedVideoRequest prepare(VideoGenerationRequest request, UserAccount user) {
         String prompt = request.prompt().trim();
-        String model = blankToDefault(request.model(), properties.model());
+        String model = blankToDefault(request.model(), VideoModelService.SUPPORTED_MODEL_ID);
         int duration = request.durationSeconds() == null ? 5 : request.durationSeconds();
         String aspectRatio = blankToDefault(request.aspectRatio(), "16:9");
         String resolution = blankToDefault(request.resolution(), "720p");

@@ -20,8 +20,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -64,7 +62,7 @@ public class VideoTaskRecordService {
         task.setResolution(request.resolution());
         task.setStatus(VideoTaskStatus.SUBMITTING);
         task.setBillingStatus(VideoBillingStatus.RESERVED);
-        task.setQuotedUnitCost(quote.model().cost());
+        task.setQuotedUnitCost(VideoModelService.USER_CREDITS_PER_SECOND);
         task.setReservedCredits(quote.credits());
         task.setChargedCredits(0);
         task.setRequestPayload(request.providerPayload());
@@ -202,7 +200,7 @@ public class VideoTaskRecordService {
         if (task.getStatus().isTerminal()) {
             return false;
         }
-        int actualCredits = actualCredits(task, snapshot.cost());
+        int actualCredits = task.getReservedCredits();
         if (task.getBillingStatus() == VideoBillingStatus.RESERVED) {
             creditService.adjust(user, actualCredits - task.getReservedCredits());
         }
@@ -328,13 +326,6 @@ public class VideoTaskRecordService {
             output.setSortOrder(index);
             assetRepository.save(output);
         }
-    }
-
-    private int actualCredits(VideoGenerationTask task, BigDecimal providerCost) {
-        if (providerCost == null || providerCost.signum() < 0) {
-            return task.getReservedCredits();
-        }
-        return providerCost.setScale(0, RoundingMode.CEILING).intValue();
     }
 
     private VideoTaskStatus providerStatus(String providerStatus) {

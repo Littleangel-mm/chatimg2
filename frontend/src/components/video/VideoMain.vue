@@ -39,12 +39,7 @@ let pollTimer = null
 const durations = [5, 10, 15]
 const ratios = ['16:9', '9:16', '1:1', '4:3', '3:4', '2.39:1']
 
-const availableModels = computed(() => {
-  return videosStore.models.filter(item => {
-    const identity = `${item?.id || ''} ${item?.name || ''}`.toLowerCase()
-    return identity.includes('grok') || identity.includes('seedance')
-  })
-})
+const availableModels = computed(() => videosStore.models)
 
 const selectedModel = computed(() => {
   return availableModels.value.find(item => item.id === model.value) || availableModels.value[0]
