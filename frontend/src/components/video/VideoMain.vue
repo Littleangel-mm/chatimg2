@@ -28,8 +28,7 @@ const durationSeconds = ref(5)
 const aspectRatio = ref('16:9')
 const resolution = ref('720p')
 const referenceAssets = ref([])
-const referenceUrl = ref('')
-const urlPreviewFailed = ref(false)
+const referenceUrls = ref([createUrlReference(0)])
 const error = ref('')
 const promptEl = ref(null)
 const feedEl = ref(null)
@@ -59,12 +58,19 @@ const avatarText = computed(() => {
 const busy = computed(() => {
   return videosStore.submitting || videosStore.uploading || referenceAssets.value.some(item => item.uploading)
 })
-const normalizedReferenceUrl = computed(() => normalizeHttpUrl(referenceUrl.value))
+const normalizedReferenceUrls = computed(() => {
+  return referenceUrls.value
+    .map((item, index) => ({ ...item, url: normalizeHttpUrl(item.value), sortOrder: index }))
+    .filter(item => item.url)
+})
+const hasInvalidReferenceUrl = computed(() => {
+  return referenceUrls.value.some(item => item.value.trim() && !normalizeHttpUrl(item.value))
+})
 const referenceReady = computed(() => {
   if (mode.value === 'image') {
     return referenceAssets.value.length > 0 && referenceAssets.value.every(item => !!item.asset && !item.uploading)
   }
-  if (mode.value === 'url') return !!normalizedReferenceUrl.value
+  if (mode.value === 'url') return normalizedReferenceUrls.value.length > 0 && !hasInvalidReferenceUrl.value
   return true
 })
 const conversation = computed(() => convStore.activeConversation)
@@ -94,10 +100,6 @@ watch(
 )
 
 watch(prompt, () => nextTick(resizePrompt))
-watch(referenceUrl, () => {
-  urlPreviewFailed.value = false
-  if (error.value === '请输入有效的公网图片 URL') error.value = ''
-})
 
 watch(
   () => conversation.value?.id,
@@ -107,7 +109,7 @@ watch(
     prompt.value = ''
     error.value = ''
     clearReference()
-    referenceUrl.value = ''
+    clearReferenceUrls()
   }
 )
 
@@ -130,7 +132,7 @@ function setMode(nextMode) {
   convStore.setConversationType(conv.id, nextMode === 'text' ? 'text2video' : 'image2video')
   error.value = ''
   if (nextMode !== 'image') clearReference()
-  if (nextMode !== 'url') referenceUrl.value = ''
+  if (nextMode !== 'url') clearReferenceUrls()
   nextTick(() => promptEl.value?.focus())
 }
 
@@ -143,6 +145,38 @@ function ensureVideoConversation(type = 'text2video') {
 function clearReference() {
   referenceAssets.value.forEach(item => URL.revokeObjectURL(item.preview))
   referenceAssets.value = []
+}
+
+function createUrlReference(index) {
+  return {
+    key: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    value: '',
+    role: index === 0 ? 'BACKGROUND' : 'SUBJECT',
+    previewFailed: false
+  }
+}
+
+function clearReferenceUrls() {
+  referenceUrls.value = [createUrlReference(0)]
+}
+
+function addReferenceUrl() {
+  if (referenceUrls.value.length >= MAX_REFERENCE_IMAGES) return
+  referenceUrls.value.push(createUrlReference(referenceUrls.value.length))
+  error.value = ''
+}
+
+function removeReferenceUrl(key) {
+  const index = referenceUrls.value.findIndex(item => item.key === key)
+  if (index < 0) return
+  referenceUrls.value.splice(index, 1)
+  if (!referenceUrls.value.length) clearReferenceUrls()
+  error.value = ''
+}
+
+function onReferenceUrlInput(reference) {
+  reference.previewFailed = false
+  if (error.value.includes('公网图片 URL')) error.value = ''
 }
 
 async function onFileChange(event) {
@@ -171,9 +205,9 @@ function normalizeHttpUrl(value) {
   }
 }
 
-function validateReferenceUrl() {
-  if (referenceUrl.value.trim() && !normalizedReferenceUrl.value) {
-    error.value = '请输入有效的公网图片 URL'
+function validateReferenceUrl(reference, index) {
+  if (reference.value.trim() && !normalizeHttpUrl(reference.value)) {
+    error.value = `第 ${index + 1} 个公网图片 URL 格式无效`
   }
 }
 
@@ -258,8 +292,8 @@ async function submit() {
     error.value = '请先完成参考图片上传'
     return
   }
-  if (mode.value === 'url' && !normalizedReferenceUrl.value) {
-    error.value = '请输入有效的公网图片 URL'
+  if (mode.value === 'url' && !referenceReady.value) {
+    error.value = hasInvalidReferenceUrl.value ? '请修正格式无效的公网图片 URL' : '请至少输入一个公网图片 URL'
     return
   }
 
@@ -271,12 +305,12 @@ async function submit() {
         sortOrder: index
       }))
     : mode.value === 'url'
-      ? [{
+      ? normalizedReferenceUrls.value.map(item => ({
           mediaType: 'IMAGE',
-          role: 'REFERENCE',
-          sourceUrl: normalizedReferenceUrl.value,
-          sortOrder: 0
-        }]
+          role: item.role,
+          sourceUrl: item.url,
+          sortOrder: item.sortOrder
+        }))
       : []
 
   const conversationType = mode.value === 'text' ? 'text2video' : 'image2video'
@@ -287,12 +321,12 @@ async function submit() {
     sourceImage: mode.value === 'image'
       ? referenceAssets.value[0]?.asset?.sourceUrl
       : mode.value === 'url'
-        ? normalizedReferenceUrl.value
+        ? normalizedReferenceUrls.value[0]?.url
         : null,
     sourceImages: mode.value === 'image'
       ? referenceAssets.value.map(item => item.asset.sourceUrl)
       : mode.value === 'url'
-        ? [normalizedReferenceUrl.value]
+        ? normalizedReferenceUrls.value.map(item => item.url)
         : [],
     type: conversationType
   })
@@ -311,7 +345,7 @@ async function submit() {
     }).then(task => convStore.attachVideoTaskToMessage(exchange.assistantMsg.id, task))
     prompt.value = ''
     clearReference()
-    referenceUrl.value = ''
+    clearReferenceUrls()
     await userStore.syncCreditsFromServer().catch(() => {})
     scrollToLatest()
     startPolling()
@@ -612,24 +646,56 @@ onUnmounted(() => {
           </label>
         </div>
 
-        <div v-if="mode === 'url'" class="url-upload-row">
-          <div class="url-field" :class="{ invalid: referenceUrl && !normalizedReferenceUrl }">
-            <span aria-hidden="true">URL</span>
-            <input
-              v-model="referenceUrl"
-              type="url"
-              maxlength="4000"
-              inputmode="url"
-              autocomplete="off"
-              placeholder="粘贴可公网访问的图片直链"
-              aria-label="公网图片 URL"
-              @blur="validateReferenceUrl"
-            />
+        <div v-if="mode === 'url'" class="url-upload-list">
+          <div v-for="(reference, index) in referenceUrls" :key="reference.key" class="url-upload-row">
+            <div class="url-field" :class="{ invalid: reference.value && !normalizeHttpUrl(reference.value) }">
+              <span aria-hidden="true">URL {{ index + 1 }}</span>
+              <input
+                v-model="reference.value"
+                type="url"
+                maxlength="4000"
+                inputmode="url"
+                autocomplete="off"
+                placeholder="粘贴可公网访问的图片直链"
+                :aria-label="`公网图片 URL ${index + 1}`"
+                @input="onReferenceUrlInput(reference)"
+                @blur="validateReferenceUrl(reference, index)"
+              />
+            </div>
+            <select v-model="reference.role" class="url-reference-role" :aria-label="`URL 参考图 ${index + 1} 类型`">
+              <option value="BACKGROUND">场景</option>
+              <option value="SUBJECT">角色</option>
+              <option value="REFERENCE">参考</option>
+            </select>
+            <div v-if="normalizeHttpUrl(reference.value) && !reference.previewFailed" class="url-preview">
+              <img
+                :src="normalizeHttpUrl(reference.value)"
+                :alt="`URL 参考图 ${index + 1}`"
+                @error="reference.previewFailed = true"
+              />
+            </div>
+            <span
+              v-else-if="normalizeHttpUrl(reference.value)"
+              class="url-preview-failed"
+              title="直链预览失败，仍可提交"
+              aria-label="直链预览失败，仍可提交"
+            >!</span>
+            <button
+              type="button"
+              class="remove-url"
+              :title="`移除 URL ${index + 1}`"
+              :aria-label="`移除 URL ${index + 1}`"
+              @click="removeReferenceUrl(reference.key)"
+            >×</button>
           </div>
-          <div v-if="normalizedReferenceUrl && !urlPreviewFailed" class="url-preview">
-            <img :src="normalizedReferenceUrl" alt="URL 参考图" @error="urlPreviewFailed = true" />
-          </div>
-          <span v-else-if="normalizedReferenceUrl" class="url-preview-hint">直链预览失败，仍可尝试提交</span>
+          <button
+            v-if="referenceUrls.length < MAX_REFERENCE_IMAGES"
+            type="button"
+            class="add-url"
+            title="添加图片 URL"
+            aria-label="添加图片 URL"
+            @click="addReferenceUrl"
+          >＋ <span>{{ referenceUrls.length }}/{{ MAX_REFERENCE_IMAGES }}</span></button>
         </div>
 
         <textarea
@@ -1064,11 +1130,19 @@ onUnmounted(() => {
   flex: 0 0 68px;
 }
 
+.url-upload-list {
+  max-height: 196px;
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 2px;
+  margin: 2px 0 8px;
+}
+
 .url-upload-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin: 2px 0 8px;
+  gap: 6px;
 }
 
 .url-field {
@@ -1099,6 +1173,7 @@ onUnmounted(() => {
   color: var(--accent-hover);
   font-size: 10px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .url-field input {
@@ -1127,12 +1202,69 @@ onUnmounted(() => {
   object-fit: cover;
 }
 
-.url-preview-hint {
-  min-width: 0;
-  flex-shrink: 1;
+.url-reference-role {
+  width: 68px;
+  height: 40px;
+  flex: 0 0 68px;
+  padding: 0 5px;
+  border-radius: 8px;
   color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
   font-size: 11px;
-  text-align: right;
+}
+
+.url-preview-failed {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  border-radius: 8px;
+  color: var(--danger);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.remove-url {
+  width: 28px;
+  height: 40px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 18px;
+}
+
+.remove-url:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.add-url {
+  width: fit-content;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-strong);
+  font-size: 15px;
+}
+
+.add-url:hover {
+  color: var(--accent-hover);
+  border-color: var(--accent);
+}
+
+.add-url span {
+  font-size: 11px;
 }
 
 .upload-preview,
@@ -1364,8 +1496,5 @@ onUnmounted(() => {
     display: none;
   }
 
-  .url-preview-hint {
-    display: none;
-  }
 }
 </style>
