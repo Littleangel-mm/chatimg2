@@ -36,6 +36,20 @@ function normalizeConversationType(type) {
   return 'text2img'
 }
 
+function sourceImages(message) {
+  const images = Array.isArray(message?.sourceImages)
+    ? message.sourceImages.filter(value => typeof value === 'string' && value)
+    : []
+  if (images.length) return images
+  return message?.sourceImage ? [message.sourceImage] : []
+}
+
+function mergeSourceImages(primary, secondary) {
+  const primaryImages = sourceImages(primary)
+  const secondaryImages = sourceImages(secondary)
+  return secondaryImages.length > primaryImages.length ? secondaryImages : primaryImages
+}
+
 function recordIdEquals(a, b) {
   return Number(a) === Number(b)
 }
@@ -224,6 +238,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         role: msg.role,
         content: msg.content || '',
         sourceImage: msg.sourceImage || null,
+        sourceImages: msg.sourceImage ? [msg.sourceImage] : [],
         recordId: msg.recordId || null,
         record: msg.recordId ? {
           id: msg.recordId,
@@ -259,31 +274,37 @@ export const useConversationsStore = defineStore('conversations', () => {
     const localStatus = resolveGenerationStatus(localMsg.record || { status: localMsg.status })
     const remoteStatus = resolveGenerationStatus(remoteMsg.record || { status: remoteMsg.status })
     if ((localStatus === 'completed' || localStatus === 'failed') && remoteStatus === 'processing') {
-      return {
+      const merged = {
         ...remoteMsg,
         ...localMsg,
         sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
         record: localMsg.record || remoteMsg.record || null,
         videoTask: localMsg.videoTask || remoteMsg.videoTask || null
       }
+      merged.sourceImages = mergeSourceImages(localMsg, remoteMsg)
+      return merged
     }
     const remoteHasResult = remoteStatus === 'completed' || remoteStatus === 'failed' || !!remoteMsg.recordId
     if (remoteHasResult || localStatus !== 'processing') {
-      return {
+      const merged = {
         ...localMsg,
         ...remoteMsg,
         sourceImage: remoteMsg.sourceImage || localMsg.sourceImage || null,
         record: remoteMsg.record || localMsg.record || null,
         videoTask: remoteMsg.videoTask || localMsg.videoTask || null
       }
+      merged.sourceImages = mergeSourceImages(remoteMsg, localMsg)
+      return merged
     }
-    return {
+    const merged = {
       ...remoteMsg,
       ...localMsg,
       sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
       record: localMsg.record || remoteMsg.record || null,
       videoTask: localMsg.videoTask || remoteMsg.videoTask || null
     }
+    merged.sourceImages = mergeSourceImages(localMsg, remoteMsg)
+    return merged
   }
 
   function mergeMessages(localMessages = [], remoteMessages = []) {
@@ -515,7 +536,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     return activeConversation.value
   }
 
-  function addExchange(conversationId, { prompt, sourceImage, type }) {
+  function addExchange(conversationId, { prompt, sourceImage, sourceImages: inputImages, type }) {
     const conv = conversations.value.find(c => c.id === conversationId)
     if (!conv) return null
     const now = Date.now()
@@ -525,6 +546,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       role: 'user',
       content: prompt,
       sourceImage: sourceImage || null,
+      sourceImages: Array.isArray(inputImages) ? inputImages.filter(Boolean) : (sourceImage ? [sourceImage] : []),
       createdAt: now
     }
     const assistantMsg = {
@@ -620,6 +642,21 @@ export const useConversationsStore = defineStore('conversations', () => {
     return userMsg?.role === 'user' ? userMsg : null
   }
 
+  function attachVideoInputAssets(conv, assistantMsg, task) {
+    const images = (task?.inputAssets || [])
+      .filter(asset => asset?.mediaType === 'IMAGE' && asset?.sourceUrl)
+      .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+      .map(asset => asset.sourceUrl)
+    if (!images.length) return false
+    const userMsg = previousUserMessage(conv, assistantMsg)
+    if (!userMsg) return false
+    const current = sourceImages(userMsg)
+    if (JSON.stringify(current) === JSON.stringify(images)) return false
+    userMsg.sourceImage = images[0]
+    userMsg.sourceImages = images
+    return true
+  }
+
   function attachSourceImagePath(conv, assistantMsg, record) {
     if (!record?.sourceImagePath) return false
     const userMsg = previousUserMessage(conv, assistantMsg)
@@ -665,6 +702,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     message.videoTask = task
     message.status = task.status || 'processing'
     message.errorMessage = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+    attachVideoInputAssets(conv, message, task)
     touchConversation(conv)
     persist()
     return true
@@ -682,9 +720,10 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (!matchesCode && !matchesClient) continue
         const previous = message.videoTask || {}
         const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+        const inputsChanged = attachVideoInputAssets(conv, message, task)
         if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
             JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
-            (message.errorMessage || null) !== nextError) {
+            (message.errorMessage || null) !== nextError || inputsChanged) {
           message.videoTaskCode = task.taskCode
           message.videoTask = task
           message.status = task.status || 'processing'
@@ -712,9 +751,10 @@ export const useConversationsStore = defineStore('conversations', () => {
           if (!matchesCode && !matchesClient) continue
           const previous = message.videoTask || {}
           const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+          const inputsChanged = attachVideoInputAssets(conv, message, task)
           if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
               JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
-              (message.errorMessage || null) !== nextError) {
+              (message.errorMessage || null) !== nextError || inputsChanged) {
             message.videoTaskCode = task.taskCode
             message.videoTask = task
             message.status = task.status || 'processing'

@@ -18,6 +18,7 @@ public record VideoGenerationResponse(
         String resolution,
         int creditsCost,
         BigDecimal providerCost,
+        List<VideoInputAssetResponse> inputAssets,
         List<String> results,
         String errorCode,
         String errorMessage,

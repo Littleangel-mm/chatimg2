@@ -27,8 +27,7 @@ const model = ref('')
 const durationSeconds = ref(5)
 const aspectRatio = ref('16:9')
 const resolution = ref('720p')
-const referenceAsset = ref(null)
-const referencePreview = ref('')
+const referenceAssets = ref([])
 const referenceUrl = ref('')
 const urlPreviewFailed = ref(false)
 const error = ref('')
@@ -38,6 +37,7 @@ let pollTimer = null
 
 const durations = [5, 10, 15]
 const ratios = ['16:9', '9:16', '1:1', '4:3', '3:4', '2.39:1']
+const MAX_REFERENCE_IMAGES = 9
 
 const availableModels = computed(() => videosStore.models)
 
@@ -56,10 +56,14 @@ const avatarText = computed(() => {
   return source.trim().charAt(0).toUpperCase() || 'U'
 })
 
-const busy = computed(() => videosStore.submitting || videosStore.uploading)
+const busy = computed(() => {
+  return videosStore.submitting || videosStore.uploading || referenceAssets.value.some(item => item.uploading)
+})
 const normalizedReferenceUrl = computed(() => normalizeHttpUrl(referenceUrl.value))
 const referenceReady = computed(() => {
-  if (mode.value === 'image') return !!referenceAsset.value
+  if (mode.value === 'image') {
+    return referenceAssets.value.length > 0 && referenceAssets.value.every(item => !!item.asset && !item.uploading)
+  }
   if (mode.value === 'url') return !!normalizedReferenceUrl.value
   return true
 })
@@ -137,16 +141,15 @@ function ensureVideoConversation(type = 'text2video') {
 }
 
 function clearReference() {
-  if (referencePreview.value) URL.revokeObjectURL(referencePreview.value)
-  referencePreview.value = ''
-  referenceAsset.value = null
+  referenceAssets.value.forEach(item => URL.revokeObjectURL(item.preview))
+  referenceAssets.value = []
 }
 
 async function onFileChange(event) {
-  const file = event.target.files?.[0]
+  const files = Array.from(event.target.files || [])
   event.target.value = ''
-  if (!file) return
-  await applyReferenceFile(file, file.type)
+  if (!files.length) return
+  await applyReferenceFiles(files)
 }
 
 function normalizeClipboardImage(file, fallbackType = 'image/png') {
@@ -174,41 +177,70 @@ function validateReferenceUrl() {
   }
 }
 
-async function applyReferenceFile(file, fallbackType = '') {
-  const normalized = normalizeClipboardImage(file, fallbackType || 'image/png')
-  if (!normalized || !normalized.type.startsWith('image/')) {
-    error.value = '请选择图片文件'
+function removeReference(key) {
+  const index = referenceAssets.value.findIndex(item => item.key === key)
+  if (index < 0 || referenceAssets.value[index].uploading) return
+  URL.revokeObjectURL(referenceAssets.value[index].preview)
+  referenceAssets.value.splice(index, 1)
+}
+
+async function applyReferenceFiles(files) {
+  const available = MAX_REFERENCE_IMAGES - referenceAssets.value.length
+  if (available <= 0) {
+    error.value = `一次最多上传 ${MAX_REFERENCE_IMAGES} 张参考图`
     return
   }
-  if (normalized.size > 20 * 1024 * 1024) {
-    error.value = '参考图片不能超过 20MB'
-    return
+  if (files.length > available) {
+    error.value = `一次最多上传 ${MAX_REFERENCE_IMAGES} 张参考图，已保留前 ${available} 张`
+  } else {
+    error.value = ''
   }
 
-  clearReference()
-  referencePreview.value = URL.createObjectURL(normalized)
-  error.value = ''
-  try {
-    referenceAsset.value = await videosStore.uploadImage(normalized)
-  } catch (uploadError) {
-    error.value = uploadError.message
-    clearReference()
+  for (const file of files.slice(0, available)) {
+    if (referenceAssets.value.length >= MAX_REFERENCE_IMAGES) break
+    const normalized = normalizeClipboardImage(file, file.type || 'image/png')
+    if (!normalized || !normalized.type.startsWith('image/')) {
+      error.value = '请选择图片文件'
+      continue
+    }
+    if (normalized.size > 20 * 1024 * 1024) {
+      error.value = '每张参考图片不能超过 20MB'
+      continue
+    }
+
+    const item = {
+      key: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      preview: URL.createObjectURL(normalized),
+      role: referenceAssets.value.length === 0 ? 'BACKGROUND' : 'SUBJECT',
+      asset: null,
+      uploading: true
+    }
+    referenceAssets.value.push(item)
+    try {
+      item.asset = await videosStore.uploadImage(normalized)
+    } catch (uploadError) {
+      error.value = uploadError.message
+      item.uploading = false
+      removeReference(item.key)
+      continue
+    }
+    item.uploading = false
   }
 }
 
 async function onPaste(event) {
   const items = Array.from(event.clipboardData?.items || [])
-  const imageItem = items.find(item => item.type?.startsWith('image/'))
-  const fileFromItem = imageItem?.getAsFile?.()
-  const fileFromList = Array.from(event.clipboardData?.files || []).find(file => {
+  const filesFromList = Array.from(event.clipboardData?.files || []).filter(file => {
     return file.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || '')
   })
-  const file = fileFromItem || fileFromList
-  if (!file) return
+  const files = filesFromList.length
+    ? filesFromList
+    : items.filter(item => item.type?.startsWith('image/')).map(item => item.getAsFile?.()).filter(Boolean)
+  if (!files.length) return
 
   event.preventDefault()
-  mode.value = 'image'
-  await applyReferenceFile(file, imageItem?.type || file.type || 'image/png')
+  setMode('image')
+  await applyReferenceFiles(files)
   nextTick(() => {
     resizePrompt()
     promptEl.value?.focus()
@@ -222,8 +254,8 @@ async function submit() {
     error.value = '请先描述你想生成的视频'
     return
   }
-  if (mode.value === 'image' && !referenceAsset.value) {
-    error.value = '请先上传一张参考图片'
+  if (mode.value === 'image' && !referenceReady.value) {
+    error.value = '请先完成参考图片上传'
     return
   }
   if (mode.value === 'url' && !normalizedReferenceUrl.value) {
@@ -232,12 +264,12 @@ async function submit() {
   }
 
   const assets = mode.value === 'image'
-    ? [{
+    ? referenceAssets.value.map((item, index) => ({
         mediaType: 'IMAGE',
-        role: 'REFERENCE',
-        localPath: referenceAsset.value.localPath,
-        sortOrder: 0
-      }]
+        role: item.role,
+        localPath: item.asset.localPath,
+        sortOrder: index
+      }))
     : mode.value === 'url'
       ? [{
           mediaType: 'IMAGE',
@@ -253,10 +285,15 @@ async function submit() {
   const exchange = convStore.addExchange(conv.id, {
     prompt: text,
     sourceImage: mode.value === 'image'
-      ? referenceAsset.value.sourceUrl
+      ? referenceAssets.value[0]?.asset?.sourceUrl
       : mode.value === 'url'
         ? normalizedReferenceUrl.value
         : null,
+    sourceImages: mode.value === 'image'
+      ? referenceAssets.value.map(item => item.asset.sourceUrl)
+      : mode.value === 'url'
+        ? [normalizedReferenceUrl.value]
+        : [],
     type: conversationType
   })
 
@@ -333,7 +370,15 @@ function typeText(task) {
 }
 
 function exchangeTypeText(exchange) {
-  return exchange.user?.sourceImage ? '图生视频' : '文生视频'
+  return exchangeReferenceImages(exchange).length ? '图生视频' : '文生视频'
+}
+
+function exchangeReferenceImages(exchange) {
+  const images = Array.isArray(exchange.user?.sourceImages)
+    ? exchange.user.sourceImages.filter(Boolean)
+    : []
+  if (images.length) return images
+  return exchange.user?.sourceImage ? [exchange.user.sourceImage] : []
 }
 
 function formatTime(value) {
@@ -438,12 +483,19 @@ onUnmounted(() => {
         <div class="message user-message">
           <div class="avatar user">你</div>
           <div class="user-content">
-            <img
-              v-if="exchange.user.sourceImage"
-              class="message-reference"
-              :src="resultUrl(exchange.user.sourceImage)"
-              alt="视频参考图"
-            />
+            <div
+              v-if="exchangeReferenceImages(exchange).length"
+              class="message-references"
+              :class="{ single: exchangeReferenceImages(exchange).length === 1 }"
+            >
+              <img
+                v-for="(image, imageIndex) in exchangeReferenceImages(exchange)"
+                :key="`${exchange.id}-${imageIndex}`"
+                class="message-reference"
+                :src="resultUrl(image)"
+                :alt="`视频参考图 ${imageIndex + 1}`"
+              />
+            </div>
             <p>{{ exchange.user.content }}</p>
             <span>
               {{ exchange.assistant?.videoTask ? typeText(exchange.assistant.videoTask) : exchangeTypeText(exchange) }}
@@ -529,15 +581,34 @@ onUnmounted(() => {
         </div>
 
         <div v-if="mode === 'image'" class="upload-row">
-          <div v-if="referencePreview" class="upload-preview">
-            <img :src="referencePreview" alt="参考图" />
-            <span v-if="videosStore.uploading" class="upload-mask">上传中...</span>
-            <button type="button" class="clear-upload" title="移除参考图" aria-label="移除参考图" @click="clearReference">×</button>
+          <div v-for="(reference, index) in referenceAssets" :key="reference.key" class="upload-item">
+            <div class="upload-preview">
+              <img :src="reference.preview" :alt="`参考图 ${index + 1}`" />
+              <span v-if="reference.uploading" class="upload-mask">上传中...</span>
+              <button
+                type="button"
+                class="clear-upload"
+                :disabled="reference.uploading"
+                :title="`移除参考图 ${index + 1}`"
+                :aria-label="`移除参考图 ${index + 1}`"
+                @click="removeReference(reference.key)"
+              >×</button>
+            </div>
+            <select v-model="reference.role" class="reference-role" :aria-label="`参考图 ${index + 1} 类型`">
+              <option value="BACKGROUND">场景</option>
+              <option value="SUBJECT">角色</option>
+              <option value="REFERENCE">参考</option>
+            </select>
           </div>
-          <label v-else class="upload-add">
-            <input type="file" accept="image/*" hidden @change="onFileChange" />
+          <label
+            v-if="referenceAssets.length < MAX_REFERENCE_IMAGES"
+            class="upload-add"
+            :class="{ disabled: busy }"
+            title="添加参考图"
+          >
+            <input type="file" accept="image/*" multiple hidden :disabled="busy" @change="onFileChange" />
             <span>＋</span>
-            <strong>参考图</strong>
+            <strong>{{ referenceAssets.length }}/{{ MAX_REFERENCE_IMAGES }}</strong>
           </label>
         </div>
 
@@ -798,14 +869,32 @@ onUnmounted(() => {
   font-size: 15px;
 }
 
+.message-references {
+  width: min(276px, 72vw);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .message-reference {
   display: block;
-  width: min(260px, 72vw);
-  max-height: 320px;
+  width: 100%;
+  aspect-ratio: 1;
   object-fit: cover;
   border-radius: 8px;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+.message-references.single {
+  display: block;
+  max-width: min(260px, 72vw);
+}
+
+.message-references.single .message-reference {
+  width: min(260px, 72vw);
+  height: auto;
+  max-height: 320px;
 }
 
 .user-content span {
@@ -961,7 +1050,18 @@ onUnmounted(() => {
 }
 
 .upload-row {
+  max-width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 3px;
   margin: 2px 0 8px;
+}
+
+.upload-item {
+  width: 68px;
+  flex: 0 0 68px;
 }
 
 .url-upload-row {
@@ -1045,6 +1145,12 @@ onUnmounted(() => {
   border: 1px dashed var(--border-strong);
 }
 
+.upload-add.disabled {
+  cursor: default;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .upload-preview img {
   width: 100%;
   height: 100%;
@@ -1071,6 +1177,23 @@ onUnmounted(() => {
   border-radius: 50%;
   color: #fff;
   background: rgba(45, 32, 35, 0.72);
+}
+
+.clear-upload:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.reference-role {
+  width: 68px;
+  height: 24px;
+  margin-top: 4px;
+  padding: 0 4px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 11px;
 }
 
 .upload-add {
