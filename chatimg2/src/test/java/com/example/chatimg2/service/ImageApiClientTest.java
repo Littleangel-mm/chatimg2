@@ -176,6 +176,25 @@ class ImageApiClientTest {
     }
 
     @Test
+    void acceptsConfiguredBaseUrlWithVersionSuffix() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/generations", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+            ReflectionTestUtils.setField(client, "apiUrl",
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1/");
+            client.initHttpClients();
+
+            String result = client.textToImage("测试图片", "gpt-image-2", List.of());
+
+            assertThat(result).isEqualTo("https://cdn.example/result.png");
+            assertThat(captured.get()).isNotNull();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void retriesWhenDistributorTemporarilyHasNoAvailableChannel() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -222,7 +241,6 @@ class ImageApiClientTest {
         ReflectionTestUtils.setField(client, "connectTimeoutMs", 5000L);
         ReflectionTestUtils.setField(client, "submitReadTimeoutMs", 5000L);
         ReflectionTestUtils.setField(client, "pollReadTimeoutMs", 5000L);
-        ReflectionTestUtils.setField(client, "maitokensWwwToWcf", false);
         client.initHttpClients();
         return client;
     }

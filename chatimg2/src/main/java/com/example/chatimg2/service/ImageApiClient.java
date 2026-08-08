@@ -67,9 +67,6 @@ public class ImageApiClient {
     @Value("${app.api.submit.retry-delay-ms:3000}")
     private long submitRetryDelayMs;
 
-    @Value("${app.api.compat.maitokens-www-to-wcf:true}")
-    private boolean maitokensWwwToWcf;
-
     private static final Set<String> COMPLETED_STATUSES = Set.of(
             "completed", "success", "succeeded", "done", "finished"
     );
@@ -610,7 +607,7 @@ public class ImageApiClient {
 
     private String getApiBaseUrl() {
         String baseUrl = apiUrl == null || apiUrl.isBlank()
-                ? "https://wcf.maitokens.com"
+                ? "https://token.wanhaiwai.com/v1"
                 : apiUrl.trim();
         while (baseUrl.endsWith("/")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
@@ -618,15 +615,12 @@ public class ImageApiClient {
         if (baseUrl.endsWith("/v1")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 3);
         }
-        if (maitokensWwwToWcf && baseUrl.equals("https://www.maitokens.com")) {
-            return "https://wcf.maitokens.com";
-        }
         return baseUrl;
     }
 
     private String sanitizeBaseUrl(String value) {
         if (value == null || value.isBlank()) {
-            return "https://wcf.maitokens.com";
+            return "https://token.wanhaiwai.com/v1";
         }
         return value.trim();
     }
