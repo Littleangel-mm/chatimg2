@@ -51,12 +51,11 @@ const items = computed(() => {
 })
 
 function newChat() {
-  if (isVideoRoute.value) {
-    convStore.createConversation('text2video')
-    emit('close-mobile')
-    return
+  if (route.name === 'home') {
+    convStore.createConversation('text2img')
+  } else {
+    convStore.activateGenerationArea('image')
   }
-  convStore.createConversation('text2img')
   router.push('/')
   emit('close-mobile')
 }
@@ -76,7 +75,11 @@ function openInspiration() {
 }
 
 function openVideo() {
-  convStore.createConversation('text2video')
+  if (route.name === 'video') {
+    convStore.createConversation('text2video')
+  } else {
+    convStore.activateGenerationArea('video')
+  }
   router.push('/video')
   emit('close-mobile')
 }
@@ -120,12 +123,11 @@ async function logout() {
     </div>
 
     <div class="new-actions">
-      <button class="new-btn" @click="newChat">新对话</button>
+      <button class="new-btn" @click="newChat">图片生成</button>
       <button class="new-btn gallery" :class="{ active: route.name === 'inspiration' }" @click="openInspiration">
         灵感画廊
       </button>
       <button class="new-btn video" :class="{ active: route.name === 'video' }" @click="openVideo">
-        <span class="video-icon" aria-hidden="true">▶</span>
         视频生成
       </button>
     </div>
@@ -263,19 +265,6 @@ async function logout() {
   color: var(--accent-hover);
   background: linear-gradient(135deg, rgba(242, 184, 198, 0.2), rgba(216, 180, 120, 0.18));
   border-color: var(--accent-border);
-}
-
-.video-icon {
-  width: 22px;
-  height: 22px;
-  display: inline-grid;
-  place-items: center;
-  flex-shrink: 0;
-  border-radius: 50%;
-  color: #fff;
-  background: var(--gradient-gold);
-  font-size: 8px;
-  padding-left: 1px;
 }
 
 .conv-list {

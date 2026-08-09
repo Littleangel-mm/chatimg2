@@ -10,6 +10,7 @@ import {
 import ImageLightbox from '../ImageLightbox.vue'
 
 const RECOVERY_GRACE_MS = 3 * 60 * 1000
+const AI_AVATAR_URL = 'http://xtstuc.dyfl.top/xtsimage/6a6f6a3beb424eaed75effde133c9b85.png'
 
 const props = defineProps({
   message: { type: Object, required: true }
@@ -59,6 +60,7 @@ const loadingText = computed(() => {
   return '正在认真画啦，再给我一点点时间喵～'
 })
 const previewImage = ref('')
+const avatarFailed = ref(false)
 
 function stopRecoveryTimer() {
   if (!recoveryTimer) return
@@ -95,7 +97,15 @@ function openPreview(url) {
 <template>
   <div class="message" :class="message.role">
     <div class="avatar">
-      {{ message.role === 'user' ? '你' : 'AI' }}
+      <template v-if="message.role === 'user'">你</template>
+      <img
+        v-else-if="!avatarFailed"
+        :src="AI_AVATAR_URL"
+        alt="AI"
+        referrerpolicy="no-referrer"
+        @error="avatarFailed = true"
+      />
+      <template v-else>AI</template>
     </div>
     <div class="bubble">
       <template v-if="message.role === 'user'">
@@ -171,12 +181,21 @@ function openPreview(url) {
   color: var(--text-muted);
 }
 
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 .message.user .avatar {
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
 
 .message.assistant .avatar {
+  overflow: hidden;
   background: var(--gold-soft);
   color: var(--gold);
 }

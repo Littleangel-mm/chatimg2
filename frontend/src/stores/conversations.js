@@ -31,6 +31,10 @@ function isVideoType(type) {
   return type === 'text2video' || type === 'image2video'
 }
 
+function generationArea(type) {
+  return isVideoType(type) ? 'video' : 'image'
+}
+
 function normalizeConversationType(type) {
   if (type === 'img2img' || isVideoType(type)) return type
   return 'text2img'
@@ -153,6 +157,10 @@ export const useConversationsStore = defineStore('conversations', () => {
   let remoteLoading = false
   let remoteSyncing = false
   let pendingRemoteSync = false
+  const lastActiveByArea = {
+    image: null,
+    video: null
+  }
   const pendingDeleteRequests = new Map()
 
   const activeConversation = computed(() =>
@@ -185,6 +193,10 @@ export const useConversationsStore = defineStore('conversations', () => {
     const stored = readStored(normalized)
     conversations.value = stored?.conversations ?? []
     activeId.value = stored?.activeId ?? conversations.value[0]?.id ?? null
+    lastActiveByArea.image = null
+    lastActiveByArea.video = null
+    const active = conversations.value.find(conv => conv.id === activeId.value)
+    if (active) lastActiveByArea[generationArea(active.type)] = active.id
     deletedConversationIds.value = new Set(
       stored?.version === STORAGE_VERSION ? (stored.deletedConversationIds ?? []) : []
     )
@@ -196,6 +208,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     pendingRemoteSync = false
     conversations.value = []
     activeId.value = null
+    lastActiveByArea.image = null
+    lastActiveByArea.video = null
     boundKeyCode.value = ''
     pendingPrompt.value = ''
     deletedConversationIds.value = new Set()
@@ -456,13 +470,36 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
     conversations.value.unshift(conv)
     activeId.value = conv.id
+    lastActiveByArea[generationArea(conv.type)] = conv.id
     persist()
     return conv
   }
 
   function selectConversation(id) {
+    const conv = conversations.value.find(c => c.id === id)
+    if (!conv) return null
     activeId.value = id
+    lastActiveByArea[generationArea(conv.type)] = conv.id
     persist()
+    return conv
+  }
+
+  function activateGenerationArea(area = 'image') {
+    const targetArea = area === 'video' ? 'video' : 'image'
+    const current = activeConversation.value
+    if (current) {
+      lastActiveByArea[generationArea(current.type)] = current.id
+      if (generationArea(current.type) === targetArea) return current
+    }
+
+    const rememberedId = lastActiveByArea[targetArea]
+    const remembered = rememberedId
+      ? conversations.value.find(conv => conv.id === rememberedId && generationArea(conv.type) === targetArea)
+      : null
+    const target = remembered || sortedConversations.value.find(conv => generationArea(conv.type) === targetArea)
+    if (target) return selectConversation(target.id)
+
+    return createConversation(targetArea === 'video' ? 'text2video' : 'text2img')
   }
 
   function renameConversation(id, title) {
@@ -481,12 +518,15 @@ export const useConversationsStore = defineStore('conversations', () => {
     const nextType = normalizeConversationType(type)
     if (conv.type === nextType) return conv
     conv.type = nextType
+    lastActiveByArea[generationArea(nextType)] = conv.id
     touchConversation(conv)
     persist()
     return conv
   }
 
   function deleteConversation(id) {
+    if (lastActiveByArea.image === id) lastActiveByArea.image = null
+    if (lastActiveByArea.video === id) lastActiveByArea.video = null
     if (id) {
       deletedConversationIds.value.add(id)
     }
@@ -955,6 +995,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     resetSession,
     createConversation,
     selectConversation,
+    activateGenerationArea,
     renameConversation,
     setConversationType,
     deleteConversation,

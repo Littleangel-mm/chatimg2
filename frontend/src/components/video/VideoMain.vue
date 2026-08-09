@@ -16,6 +16,8 @@ import { useVideosStore } from '../../stores/videos'
 
 defineEmits(['open-sidebar'])
 
+const AI_AVATAR_URL = 'http://xtstuc.dyfl.top/xtsimage/6a6f6a3beb424eaed75effde133c9b85.png'
+
 const authStore = useAuthStore()
 const convStore = useConversationsStore()
 const userStore = useUserStore()
@@ -32,6 +34,7 @@ const referenceUrls = ref([createUrlReference(0)])
 const error = ref('')
 const promptEl = ref(null)
 const feedEl = ref(null)
+const avatarFailed = ref(false)
 let pollTimer = null
 
 const durations = [5, 10, 15]
@@ -127,7 +130,7 @@ function scrollToLatest() {
 }
 
 function setMode(nextMode) {
-  const conv = ensureVideoConversation(nextMode === 'text' ? 'text2video' : 'image2video')
+  const conv = ensureVideoConversation()
   mode.value = nextMode
   convStore.setConversationType(conv.id, nextMode === 'text' ? 'text2video' : 'image2video')
   error.value = ''
@@ -136,10 +139,10 @@ function setMode(nextMode) {
   nextTick(() => promptEl.value?.focus())
 }
 
-function ensureVideoConversation(type = 'text2video') {
+function ensureVideoConversation() {
   const current = conversation.value
   if (current?.type === 'text2video' || current?.type === 'image2video') return current
-  return convStore.createConversation(type)
+  return convStore.activateGenerationArea('video')
 }
 
 function clearReference() {
@@ -314,7 +317,7 @@ async function submit() {
       : []
 
   const conversationType = mode.value === 'text' ? 'text2video' : 'image2video'
-  const conv = ensureVideoConversation(conversationType)
+  const conv = ensureVideoConversation()
   convStore.setConversationType(conv.id, conversationType)
   const exchange = convStore.addExchange(conv.id, {
     prompt: text,
@@ -493,7 +496,6 @@ onUnmounted(() => {
       </button>
       <div class="header-title">
         <h1>视频生成</h1>
-        <span class="type-badge">Seedance 2.0</span>
       </div>
       <div class="account-summary">
         <span class="credit-count">{{ userStore.remainingCredits }} 积分</span>
@@ -544,7 +546,16 @@ onUnmounted(() => {
         </div>
 
         <div v-if="exchange.assistant" class="message assistant-message">
-          <div class="avatar assistant">AI</div>
+          <div class="avatar assistant">
+            <img
+              v-if="!avatarFailed"
+              :src="AI_AVATAR_URL"
+              alt="AI"
+              referrerpolicy="no-referrer"
+              @error="avatarFailed = true"
+            />
+            <span v-else>AI</span>
+          </div>
           <div class="assistant-content">
             <div
               v-if="!exchange.assistant.videoTask && exchange.assistant.status !== 'failed'"
@@ -788,16 +799,10 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.type-badge,
 .credit-count {
   padding: 3px 10px;
   border-radius: 999px;
   font-size: 11px;
-}
-
-.type-badge {
-  color: var(--gold);
-  background: var(--gold-soft);
 }
 
 .account-summary {
@@ -905,12 +910,21 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 .avatar.user {
   color: var(--accent-hover);
   background: var(--accent-soft);
 }
 
 .avatar.assistant {
+  overflow: hidden;
   color: var(--gold);
   background: var(--gold-soft);
 }
@@ -1484,10 +1498,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 480px) {
-  .type-badge {
-    display: none;
-  }
-
   .options select:first-child {
     max-width: 128px;
   }

@@ -17,6 +17,7 @@ onMounted(() => {
   if (userStore.keyCode) {
     convStore.bindKeyCode(userStore.keyCode)
   }
+  convStore.activateGenerationArea('image')
 })
 </script>
 
