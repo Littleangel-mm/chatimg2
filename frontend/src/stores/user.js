@@ -4,6 +4,7 @@ import api, { generateApi } from '../api'
 import { useConversationsStore } from './conversations'
 import { useAuthStore } from './auth'
 import { resolveGenerationStatus } from '../utils/generation'
+import { dataUrlToFile } from '../utils/image'
 
 const CACHE_KEY = 'userCache'
 let historyFetchPromise = null
@@ -237,13 +238,25 @@ export const useUserStore = defineStore('user', () => {
   async function generate({ prompt, type, sourceImage, clientMessageId }) {
     generating.value = true
     try {
-      const { data } = await generateApi.post('/user/generate', {
-        keyCode: keyCode.value,
-        prompt,
-        type,
-        sourceImage,
-        clientMessageId
-      })
+      let response
+      if (type === 'img2img' && sourceImage) {
+        const form = new FormData()
+        form.append('prompt', prompt)
+        form.append('type', type)
+        if (keyCode.value) form.append('keyCode', keyCode.value)
+        if (clientMessageId) form.append('clientMessageId', clientMessageId)
+        form.append('sourceImage', dataUrlToFile(sourceImage))
+        response = await generateApi.post('/user/generate', form)
+      } else {
+        response = await generateApi.post('/user/generate', {
+          keyCode: keyCode.value,
+          prompt,
+          type,
+          sourceImage,
+          clientMessageId
+        })
+      }
+      const { data } = response
       if (data.code !== 200) throw new Error(data.message)
 
       upsertHistoryRecord(data.data)

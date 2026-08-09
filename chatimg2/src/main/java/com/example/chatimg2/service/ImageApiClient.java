@@ -171,10 +171,15 @@ public class ImageApiClient {
 
     private String submitImageEdit(String prompt, byte[] imageBytes, String model) {
         String size = resolveRequestedSize(prompt);
-        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse("image/png"));
+        String mediaType = ImageContentSupport.detectMediaType(imageBytes);
+        if (mediaType == null) {
+            throw new BusinessException("INVALID_SOURCE_IMAGE", "参考图片格式无效，请重新上传 JPEG、PNG 或 WebP 图片");
+        }
+        String fileName = "source." + ImageContentSupport.extension(mediaType);
+        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
         MultipartBody body = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("image", "source.png", fileBody)
+                .addFormDataPart("image", fileName, fileBody)
                 .addFormDataPart("prompt", prompt)
                 .addFormDataPart("model", model)
                 .addFormDataPart("n", "1")
@@ -187,7 +192,7 @@ public class ImageApiClient {
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, mediaType=image/png, size={}", model, size);
+        log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
         return resolveImageFromSubmit(request);
     }
 

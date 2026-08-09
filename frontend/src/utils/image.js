@@ -1,6 +1,20 @@
 const MAX_SIZE = 1024
 const QUALITY = 0.82
 
+export function dataUrlToFile(dataUrl, baseName = 'source') {
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/i.exec(dataUrl || '')
+  if (!match) throw new Error('参考图片数据无效，请重新上传')
+
+  const mediaType = match[1].toLowerCase()
+  const binary = atob(match[2])
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  const extension = mediaType === 'image/jpeg' ? 'jpg' : mediaType.split('/')[1]
+  return new File([bytes], `${baseName}.${extension}`, { type: mediaType })
+}
+
 export function compressImage(file) {
   return new Promise((resolve, reject) => {
     if (!file) {

@@ -50,6 +50,28 @@ public class ImageGenerationService {
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
 
+        return submitForKey(key, normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+    }
+
+    public GenerationRecord submitGenerationUpload(String keyCode, String prompt, String type,
+                                                   byte[] sourceImageBytes, String clientMessageId) {
+        String normalizedPrompt = validatePrompt(prompt);
+        ActivationKey key = keyService.activate(keyCode)
+                .orElseThrow(() -> new BusinessException("KEY_INVALID", "密钥无效或已禁用"));
+
+        GenerationRecord existing = findExistingClientRecord(key.getId(), null, clientMessageId);
+        if (existing != null) {
+            return prepareRecordForRead(existing);
+        }
+
+        String generationType = resolveGenerationType(type);
+        String sourceImagePath = saveUploadedSourceIfNeeded(generationType, sourceImageBytes, null);
+        return submitForKey(key, normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+    }
+
+    private GenerationRecord submitForKey(ActivationKey key, String normalizedPrompt, String generationType,
+                                          String sourceImagePath, String clientMessageId) {
+
         GenerationRecordService.PendingRecord pending;
         try {
             pending = recordService.createPendingRecord(
@@ -78,6 +100,26 @@ public class ImageGenerationService {
         String ownerFolder = authService.safeEmailFolder(user.getEmail());
         String generationType = resolveGenerationType(type);
         String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
+
+        return submitForUser(user, normalizedPrompt, generationType, sourceImagePath, ownerFolder, clientMessageId);
+    }
+
+    public GenerationRecord submitGenerationForUserUpload(UserAccount user, String prompt, String type,
+                                                          byte[] sourceImageBytes, String clientMessageId) {
+        String normalizedPrompt = validatePrompt(prompt);
+        GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
+        if (existing != null) {
+            return prepareRecordForRead(existing);
+        }
+
+        String ownerFolder = authService.safeEmailFolder(user.getEmail());
+        String generationType = resolveGenerationType(type);
+        String sourceImagePath = saveUploadedSourceIfNeeded(generationType, sourceImageBytes, ownerFolder);
+        return submitForUser(user, normalizedPrompt, generationType, sourceImagePath, ownerFolder, clientMessageId);
+    }
+
+    private GenerationRecord submitForUser(UserAccount user, String normalizedPrompt, String generationType,
+                                           String sourceImagePath, String ownerFolder, String clientMessageId) {
 
         GenerationRecordService.PendingRecord pending;
         try {
@@ -193,6 +235,27 @@ public class ImageGenerationService {
             throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传参考图片");
         }
         return saveSourceImage(decodeBase64Image(sourceImageBase64), ownerFolder);
+    }
+
+    private String saveUploadedSourceIfNeeded(String generationType, byte[] sourceImageBytes, String ownerFolder) {
+        if (!"img2img".equals(generationType)) {
+            return null;
+        }
+        return saveSourceImage(decodeUploadedImage(sourceImageBytes), ownerFolder);
+    }
+
+    private DecodedImage decodeUploadedImage(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new BusinessException("SOURCE_IMAGE_EMPTY", "参考图片内容为空");
+        }
+        if (bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+            throw new BusinessException("SOURCE_IMAGE_TOO_LARGE", "参考图片不能超过 20MB");
+        }
+        String mediaType = ImageContentSupport.detectMediaType(bytes);
+        if (mediaType == null) {
+            throw new BusinessException("SOURCE_IMAGE_INVALID", "仅支持 PNG、JPEG 和 WebP 图片");
+        }
+        return new DecodedImage(bytes, ImageContentSupport.extension(mediaType));
     }
 
     private DecodedImage decodeBase64Image(String base64) {

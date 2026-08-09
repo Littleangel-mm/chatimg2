@@ -1,5 +1,6 @@
 package com.example.chatimg2.service;
 
+import com.example.chatimg2.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -15,12 +16,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ImageApiClientTest {
+
+    private static final byte[] PNG_IMAGE = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x01};
+    private static final byte[] JPEG_IMAGE = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x01};
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -77,21 +82,37 @@ class ImageApiClientTest {
     }
 
     @Test
-    void imageEditUsesHistoricalRequestContract() throws Exception {
+    void imageEditUsesDetectedJpegMediaType() throws Exception {
         AtomicReference<CapturedRequest> captured = new AtomicReference<>();
         HttpServer server = startServer("/v1/images/edits", captured);
         try {
             ImageApiClient client = configuredClient(server);
 
-            client.imageEdit("修改图片", new byte[]{1, 2, 3}, "gpt-image-2");
+            client.imageEdit("修改图片", JPEG_IMAGE, "gpt-image-2");
 
             CapturedRequest request = captured.get();
             assertThat(request.body())
-                    .contains("name=\"image\"; filename=\"source.png\"")
-                    .contains("Content-Type: image/png")
+                    .contains("name=\"image\"; filename=\"source.jpg\"")
+                    .contains("Content-Type: image/jpeg")
                     .contains("name=\"size\"")
                     .contains("1024x1024");
             assertThat(request.idempotencyKey()).isNull();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void imageEditRejectsUnknownImageContentBeforeCallingProvider() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+
+            assertThatThrownBy(() -> client.imageEdit("修改图片", new byte[]{1, 2, 3}, "gpt-image-2"))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("参考图片格式无效");
+            assertThat(captured.get()).isNull();
         } finally {
             server.stop(0);
         }
@@ -120,7 +141,7 @@ class ImageApiClientTest {
         try {
             ImageApiClient client = configuredClient(server);
 
-            client.imageEdit("调整为电影横版，16：9", new byte[]{1, 2, 3}, "gpt-image-2");
+            client.imageEdit("调整为电影横版，16：9", PNG_IMAGE, "gpt-image-2");
 
             assertThat(captured.get().body()).contains("1536x1024");
         } finally {
@@ -135,7 +156,7 @@ class ImageApiClientTest {
         try {
             ImageApiClient client = configuredClient(server);
 
-            client.imageEdit("realistic style, 9\u223616", new byte[]{1, 2, 3}, "gpt-image-2");
+            client.imageEdit("realistic style, 9\u223616", PNG_IMAGE, "gpt-image-2");
 
             assertThat(captured.get().body()).contains("1024x1536");
         } finally {
