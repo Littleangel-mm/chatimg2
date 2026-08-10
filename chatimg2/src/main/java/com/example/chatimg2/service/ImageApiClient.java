@@ -612,7 +612,7 @@ public class ImageApiClient {
 
     private String getApiBaseUrl() {
         String baseUrl = apiUrl == null || apiUrl.isBlank()
-                ? "https://token.wanhaiwai.com/v1"
+                ? "https://www.maitokens.top/v1"
                 : apiUrl.trim();
         while (baseUrl.endsWith("/")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
@@ -625,7 +625,7 @@ public class ImageApiClient {
 
     private String sanitizeBaseUrl(String value) {
         if (value == null || value.isBlank()) {
-            return "https://token.wanhaiwai.com/v1";
+            return "https://www.maitokens.top/v1";
         }
         return value.trim();
     }
