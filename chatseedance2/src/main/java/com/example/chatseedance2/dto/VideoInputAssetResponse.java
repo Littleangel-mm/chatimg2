@@ -7,6 +7,7 @@ public record VideoInputAssetResponse(
         VideoAssetMediaType mediaType,
         VideoAssetRole role,
         String sourceUrl,
+        String previewPath,
         int sortOrder
 ) {
 }

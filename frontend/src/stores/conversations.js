@@ -762,6 +762,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
         const inputsChanged = attachVideoInputAssets(conv, message, task)
         if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+            JSON.stringify(previous.inputAssets || []) !== JSON.stringify(task.inputAssets || []) ||
             JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
             (message.errorMessage || null) !== nextError || inputsChanged) {
           message.videoTaskCode = task.taskCode
@@ -793,6 +794,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
           const inputsChanged = attachVideoInputAssets(conv, message, task)
           if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+              JSON.stringify(previous.inputAssets || []) !== JSON.stringify(task.inputAssets || []) ||
               JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
               (message.errorMessage || null) !== nextError || inputsChanged) {
             message.videoTaskCode = task.taskCode

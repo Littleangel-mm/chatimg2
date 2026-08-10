@@ -13,6 +13,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import { useVideosStore } from '../../stores/videos'
+import VideoReferenceImage from './VideoReferenceImage.vue'
 
 defineEmits(['open-sidebar'])
 
@@ -411,11 +412,20 @@ function exchangeTypeText(exchange) {
 }
 
 function exchangeReferenceImages(exchange) {
+  const taskAssets = Array.isArray(exchange.assistant?.videoTask?.inputAssets)
+    ? exchange.assistant.videoTask.inputAssets
+        .filter(asset => asset?.mediaType === 'IMAGE' && (asset?.sourceUrl || asset?.previewPath))
+        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+        .map(asset => ({ sourceUrl: asset.sourceUrl || '', previewPath: asset.previewPath || '' }))
+    : []
+  if (taskAssets.length) return taskAssets
   const images = Array.isArray(exchange.user?.sourceImages)
     ? exchange.user.sourceImages.filter(Boolean)
     : []
-  if (images.length) return images
-  return exchange.user?.sourceImage ? [exchange.user.sourceImage] : []
+  if (images.length) return images.map(sourceUrl => ({ sourceUrl, previewPath: '' }))
+  return exchange.user?.sourceImage
+    ? [{ sourceUrl: exchange.user.sourceImage, previewPath: '' }]
+    : []
 }
 
 function formatTime(value) {
@@ -524,11 +534,12 @@ onUnmounted(() => {
               class="message-references"
               :class="{ single: exchangeReferenceImages(exchange).length === 1 }"
             >
-              <img
+              <VideoReferenceImage
                 v-for="(image, imageIndex) in exchangeReferenceImages(exchange)"
-                :key="`${exchange.id}-${imageIndex}`"
+                :key="`${exchange.id}-${image.previewPath || image.sourceUrl}-${imageIndex}`"
                 class="message-reference"
-                :src="resultUrl(image)"
+                :source-url="image.sourceUrl"
+                :preview-path="image.previewPath"
                 :alt="`视频参考图 ${imageIndex + 1}`"
               />
             </div>

@@ -11,6 +11,7 @@ import com.example.chatseedance2.security.AppRole;
 import com.example.chatseedance2.security.AuthService;
 import com.example.chatseedance2.security.RequireRole;
 import com.example.chatseedance2.service.VideoGenerationService;
+import com.example.chatseedance2.service.VideoInputPreviewService;
 import com.example.chatseedance2.service.VideoModelService;
 import com.example.chatseedance2.service.VideoStorageService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,7 +26,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 
+import java.time.Duration;
 import java.util.List;
 
 @RestController
@@ -38,6 +43,7 @@ public class VideoGenerationController {
     private final VideoGenerationService generationService;
     private final VideoModelService modelService;
     private final VideoStorageService storageService;
+    private final VideoInputPreviewService inputPreviewService;
 
     @PostMapping("/generations")
     public ApiResponse<VideoGenerationResponse> submit(
@@ -56,6 +62,20 @@ public class VideoGenerationController {
             @PathVariable String taskCode,
             HttpServletRequest request) {
         return ApiResponse.success(generationService.getForUser(user(request), taskCode));
+    }
+
+    @GetMapping("/generations/{taskCode}/inputs/{assetId}")
+    public ResponseEntity<byte[]> inputPreview(
+            @PathVariable String taskCode,
+            @PathVariable Long assetId,
+            HttpServletRequest request) {
+        var asset = generationService.requireInputImageForUser(user(request), taskCode, assetId);
+        var preview = inputPreviewService.load(asset);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(preview.mediaType()))
+                .cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePrivate())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(preview.bytes());
     }
 
     @GetMapping("/models")

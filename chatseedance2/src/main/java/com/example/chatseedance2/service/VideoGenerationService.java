@@ -4,11 +4,15 @@ import com.example.chatseedance2.dto.PageResult;
 import com.example.chatseedance2.dto.VideoGenerationRequest;
 import com.example.chatseedance2.dto.VideoGenerationResponse;
 import com.example.chatseedance2.entity.UserAccount;
+import com.example.chatseedance2.entity.VideoAssetDirection;
+import com.example.chatseedance2.entity.VideoAssetMediaType;
+import com.example.chatseedance2.entity.VideoGenerationAsset;
 import com.example.chatseedance2.entity.VideoGenerationTask;
 import com.example.chatseedance2.entity.VideoTaskEvent;
 import com.example.chatseedance2.exception.BusinessException;
 import com.example.chatseedance2.exception.ForbiddenException;
 import com.example.chatseedance2.repository.VideoGenerationTaskRepository;
+import com.example.chatseedance2.repository.VideoGenerationAssetRepository;
 import com.example.chatseedance2.repository.VideoTaskEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +34,7 @@ public class VideoGenerationService {
     private final VideoTaskRecordService recordService;
     private final VideoTaskExecutionService executionService;
     private final VideoGenerationTaskRepository taskRepository;
+    private final VideoGenerationAssetRepository assetRepository;
     private final VideoTaskEventRepository eventRepository;
     private final VideoTaskMapper mapper;
 
@@ -58,6 +63,18 @@ public class VideoGenerationService {
             throw new ForbiddenException("无权查看该视频任务");
         }
         return mapper.toResponse(task);
+    }
+
+    public VideoGenerationAsset requireInputImageForUser(UserAccount user, String taskCode, Long assetId) {
+        VideoGenerationTask task = requireTask(taskCode);
+        if (!user.getId().equals(task.getUserId())) {
+            throw new ForbiddenException("无权查看该视频任务");
+        }
+        return assetRepository.findById(assetId)
+                .filter(asset -> task.getId().equals(asset.getTaskId()))
+                .filter(asset -> asset.getDirection() == VideoAssetDirection.INPUT)
+                .filter(asset -> asset.getMediaType() == VideoAssetMediaType.IMAGE)
+                .orElseThrow(() -> new BusinessException("INPUT_IMAGE_NOT_FOUND", "视频参考图不存在"));
     }
 
     public List<VideoGenerationResponse> history(UserAccount user) {

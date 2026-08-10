@@ -22,7 +22,9 @@ public class VideoTaskMapper {
         List<VideoInputAssetResponse> inputAssets = assets.stream()
                 .filter(asset -> asset.getDirection() == VideoAssetDirection.INPUT)
                 .map(asset -> new VideoInputAssetResponse(
-                        asset.getMediaType(), asset.getAssetRole(), asset.getSourceUrl(), asset.getSortOrder()))
+                        asset.getMediaType(), asset.getAssetRole(), asset.getSourceUrl(),
+                        "/video/generations/" + task.getTaskCode() + "/inputs/" + asset.getId(),
+                        asset.getSortOrder()))
                 .toList();
         List<String> results = assets.stream()
                 .filter(asset -> asset.getDirection() == VideoAssetDirection.OUTPUT)

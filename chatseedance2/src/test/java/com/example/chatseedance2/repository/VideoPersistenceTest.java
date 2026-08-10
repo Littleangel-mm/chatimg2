@@ -10,6 +10,7 @@ import com.example.chatseedance2.entity.VideoGenerationType;
 import com.example.chatseedance2.entity.VideoTaskEvent;
 import com.example.chatseedance2.entity.VideoTaskEventType;
 import com.example.chatseedance2.entity.VideoTaskStatus;
+import com.example.chatseedance2.service.VideoTaskMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -68,6 +69,10 @@ class VideoPersistenceTest {
         assertThat(assetRepository.findByTaskIdOrderBySortOrderAsc(savedTask.getId()))
                 .extracting(VideoGenerationAsset::getAssetRole)
                 .containsExactly(VideoAssetRole.SUBJECT);
+        assertThat(new VideoTaskMapper(assetRepository).toResponse(reloaded).inputAssets())
+                .singleElement()
+                .extracting(input -> input.previewPath())
+                .isEqualTo("/video/generations/VIDEO-20260730-ABCDEF01/inputs/" + asset.getId());
         assertThat(eventRepository.findTop100ByTaskIdOrderByCreatedAtDesc(savedTask.getId()))
                 .extracting(VideoTaskEvent::getEventType)
                 .containsExactly(VideoTaskEventType.CREATED);
