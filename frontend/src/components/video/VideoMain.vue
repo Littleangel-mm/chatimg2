@@ -6,6 +6,7 @@ import {
   onDeactivated,
   onMounted,
   onUnmounted,
+  reactive,
   ref,
   watch
 } from 'vue'
@@ -36,6 +37,7 @@ const error = ref('')
 const promptEl = ref(null)
 const feedEl = ref(null)
 const avatarFailed = ref(false)
+const preparingSubmission = ref(false)
 let pollTimer = null
 
 const durations = [5, 10, 15]
@@ -60,7 +62,7 @@ const avatarText = computed(() => {
 })
 
 const busy = computed(() => {
-  return videosStore.submitting || videosStore.uploading || referenceAssets.value.some(item => item.uploading)
+  return preparingSubmission.value || videosStore.submitting || referenceAssets.value.some(item => item.uploading)
 })
 const normalizedReferenceUrls = computed(() => {
   return referenceUrls.value
@@ -246,13 +248,13 @@ async function applyReferenceFiles(files) {
       continue
     }
 
-    const item = {
+    const item = reactive({
       key: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       preview: URL.createObjectURL(normalized),
       role: referenceAssets.value.length === 0 ? 'BACKGROUND' : 'SUBJECT',
       asset: null,
       uploading: true
-    }
+    })
     referenceAssets.value.push(item)
     try {
       item.asset = await videosStore.uploadImage(normalized)
@@ -286,7 +288,11 @@ async function onPaste(event) {
 }
 
 async function submit() {
-  if (busy.value) return
+  if (preparingSubmission.value || videosStore.submitting) return
+  if (referenceAssets.value.some(item => item.uploading)) {
+    error.value = '参考图片仍在上传，请稍等'
+    return
+  }
   const text = prompt.value.trim()
   if (!text) {
     error.value = '请先描述你想生成的视频'
@@ -336,6 +342,7 @@ async function submit() {
   })
 
   error.value = ''
+  preparingSubmission.value = true
   try {
     await convStore.syncRemote().catch(() => false)
     await videosStore.submit({
@@ -374,6 +381,8 @@ async function submit() {
     }
     error.value = submitError.message
     convStore.failAssistantMessage(exchange.assistantMsg.id, submitError.message)
+  } finally {
+    preparingSubmission.value = false
   }
 }
 
@@ -755,7 +764,7 @@ onUnmounted(() => {
               :disabled="busy || !prompt.trim() || !referenceReady"
               @click="submit"
             >
-              {{ videosStore.submitting ? '提交中...' : '生成视频' }}
+              {{ preparingSubmission || videosStore.submitting ? '提交中...' : '生成视频' }}
             </button>
           </div>
         </div>
