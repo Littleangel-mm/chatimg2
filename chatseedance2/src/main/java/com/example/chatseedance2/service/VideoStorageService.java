@@ -138,7 +138,9 @@ public class VideoStorageService {
             throw new BusinessException("PUBLIC_BASE_URL_REQUIRED", "无法确定素材访问地址");
         }
         String encoded = String.join("/", java.util.Arrays.stream(relativePath.split("/"))
-                .map(part -> URLEncoder.encode(part, StandardCharsets.UTF_8).replace("+", "%20"))
+                .map(part -> URLEncoder.encode(part, StandardCharsets.UTF_8)
+                        .replace("+", "%20")
+                        .replace("%40", "@"))
                 .toList());
         return base.replaceFirst("/+$", "") + "/video-media/" + encoded;
     }

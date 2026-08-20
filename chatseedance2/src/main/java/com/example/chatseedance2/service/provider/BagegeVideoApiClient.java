@@ -5,7 +5,9 @@ import com.example.chatseedance2.exception.ProviderApiException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -23,6 +25,7 @@ import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BagegeVideoApiClient {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -33,6 +36,13 @@ public class BagegeVideoApiClient {
     private final OkHttpClient seedanceHttpClient;
     private final ObjectMapper objectMapper;
     private final SeedanceApiProperties properties;
+
+    @PostConstruct
+    void logConfiguration() {
+        log.info("Video API configuration: provider=BAGEGE, baseUrl={}, model={}, readTimeoutMs={}, keyConfigured={}",
+                baseUrl(), properties.model(), properties.readTimeoutMs(),
+                properties.key() != null && !properties.key().isBlank());
+    }
 
     public List<ProviderModel> listModels() {
         Request request = requestBuilder("/models").get().build();
@@ -56,6 +66,8 @@ public class BagegeVideoApiClient {
             Request request = requestBuilder("/videos/generations")
                     .post(RequestBody.create(json, JSON))
                     .build();
+            log.info("Video provider submission: provider=BAGEGE, url={}, model={}",
+                    request.url(), payload.get("model"));
             return snapshot(execute(request, true));
         } catch (ProviderApiException e) {
             throw e;
@@ -86,11 +98,14 @@ public class BagegeVideoApiClient {
     }
 
     private Request.Builder requestBuilder(String path) {
-        String baseUrl = properties.url() == null ? "" : properties.url().replaceFirst("/+$", "");
         return new Request.Builder()
-                .url(baseUrl + path)
+                .url(baseUrl() + path)
                 .header("Authorization", "Bearer " + properties.key())
                 .header("Accept", "application/json");
+    }
+
+    private String baseUrl() {
+        return properties.url() == null ? "" : properties.url().trim().replaceFirst("/+$", "");
     }
 
     private ProviderApiException providerError(int status, JsonNode root, boolean submission) {

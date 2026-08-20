@@ -22,7 +22,7 @@ public class VideoTaskMapper {
         List<VideoInputAssetResponse> inputAssets = assets.stream()
                 .filter(asset -> asset.getDirection() == VideoAssetDirection.INPUT)
                 .map(asset -> new VideoInputAssetResponse(
-                        asset.getMediaType(), asset.getAssetRole(), asset.getSourceUrl(),
+                        asset.getMediaType(), asset.getAssetRole(), displaySourceUrl(asset),
                         "/video/generations/" + task.getTaskCode() + "/inputs/" + asset.getId(),
                         asset.getSortOrder()))
                 .toList();
@@ -59,5 +59,13 @@ public class VideoTaskMapper {
                 publicStatus.equals("failed") ? task.getErrorSuggestion() : null,
                 task.getCreatedAt(),
                 task.getCompletedAt());
+    }
+
+    private String displaySourceUrl(VideoGenerationAsset asset) {
+        if (asset.getLocalPath() == null || asset.getLocalPath().isBlank()) {
+            return asset.getSourceUrl();
+        }
+        String normalized = asset.getLocalPath().replace('\\', '/').replaceFirst("^/+", "");
+        return "/video-media/" + normalized;
     }
 }

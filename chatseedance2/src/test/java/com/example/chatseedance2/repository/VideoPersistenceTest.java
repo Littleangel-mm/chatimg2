@@ -53,6 +53,7 @@ class VideoPersistenceTest {
         asset.setMediaType(VideoAssetMediaType.IMAGE);
         asset.setAssetRole(VideoAssetRole.SUBJECT);
         asset.setSourceUrl("https://cdn.example.com/person.png");
+        asset.setLocalPath("inputs/user@example.com/person.png");
         asset.setSortOrder(0);
         assetRepository.saveAndFlush(asset);
 
@@ -71,8 +72,12 @@ class VideoPersistenceTest {
                 .containsExactly(VideoAssetRole.SUBJECT);
         assertThat(new VideoTaskMapper(assetRepository).toResponse(reloaded).inputAssets())
                 .singleElement()
-                .extracting(input -> input.previewPath())
-                .isEqualTo("/video/generations/VIDEO-20260730-ABCDEF01/inputs/" + asset.getId());
+                .satisfies(input -> {
+                    assertThat(input.sourceUrl())
+                            .isEqualTo("/video-media/inputs/user@example.com/person.png");
+                    assertThat(input.previewPath())
+                            .isEqualTo("/video/generations/VIDEO-20260730-ABCDEF01/inputs/" + asset.getId());
+                });
         assertThat(eventRepository.findTop100ByTaskIdOrderByCreatedAtDesc(savedTask.getId()))
                 .extracting(VideoTaskEvent::getEventType)
                 .containsExactly(VideoTaskEventType.CREATED);

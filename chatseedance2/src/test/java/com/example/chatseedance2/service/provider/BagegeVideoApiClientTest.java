@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,11 +48,13 @@ class BagegeVideoApiClientTest {
             assertThat(model.id()).isEqualTo("ty-sd2-mini-15s");
             assertThat(model.cost()).isEqualByComparingTo("17");
         });
-        assertThat(server.takeRequest().getHeader("Authorization")).isEqualTo("Bearer test-key");
+        RecordedRequest request = server.takeRequest();
+        assertThat(request.getPath()).isEqualTo("/openai/v1/models");
+        assertThat(request.getHeader("Authorization")).isEqualTo("Bearer test-key");
     }
 
     @Test
-    void parsesCompletedTaskResult() {
+    void parsesCompletedTaskResult() throws InterruptedException {
         server.enqueue(json(200, """
                 {"id":"video_123","status":"completed","model":"ty-sd2-mini-15s","cost":68,
                 "results":[{"url":"https://cdn.example.com/result.mp4"}]}
@@ -62,6 +65,7 @@ class BagegeVideoApiClientTest {
         assertThat(result.id()).isEqualTo("video_123");
         assertThat(result.status()).isEqualTo("completed");
         assertThat(result.resultUrls()).containsExactly("https://cdn.example.com/result.mp4");
+        assertThat(server.takeRequest().getPath()).isEqualTo("/openai/v1/videos/generations");
     }
 
     @Test

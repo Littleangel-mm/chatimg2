@@ -17,6 +17,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class VideoRequestPreparationServiceTest {
 
@@ -73,6 +74,31 @@ class VideoRequestPreparationServiceTest {
         assertThat(prepared.providerPayload())
                 .containsEntry("reference_video_urls", List.of("https://cdn.example.com/previous.mp4"))
                 .doesNotContainKey("video_urls");
+    }
+
+    @Test
+    void convertsServerUploadPathToProviderImageUrl() {
+        VideoStorageService storageService = mock(VideoStorageService.class);
+        service = new VideoRequestPreparationService(storageService, new ObjectMapper());
+        String localPath = "inputs/video@example.com/reference.png";
+        String publicUrl = "https://chatimg2.cn/video-media/" + localPath;
+        when(storageService.requireOwnedPublicUrl(localPath, user)).thenReturn(publicUrl);
+        List<VideoAssetInput> assets = List.of(new VideoAssetInput(
+                VideoAssetMediaType.IMAGE,
+                VideoAssetRole.BACKGROUND,
+                null,
+                localPath,
+                0));
+
+        PreparedVideoRequest prepared = service.prepare(request(assets), user);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> references =
+                (List<Map<String, Object>>) prepared.providerPayload().get("image_references");
+        assertThat(references).singleElement()
+                .satisfies(reference -> assertThat(reference)
+                        .containsEntry("image_url", publicUrl)
+                        .containsEntry("type", "background"));
     }
 
     private VideoGenerationRequest request(List<VideoAssetInput> assets) {

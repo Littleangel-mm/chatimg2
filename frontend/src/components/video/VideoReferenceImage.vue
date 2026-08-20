@@ -33,11 +33,26 @@ function releaseObjectUrl() {
 function directUrl(value) {
   const url = (value || '').trim()
   if (!url) return ''
-  if (/^(data:|blob:|https:\/\/)/i.test(url)) return url
+  if (/^(data:|blob:)/i.test(url)) return url
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url)
+      if (parsed.pathname.startsWith('/video-media/')) {
+        const mediaPath = parsed.pathname.replace(/%40/gi, '@')
+        return `${mediaPath}${parsed.search}${parsed.hash}`
+      }
+    } catch {
+      return ''
+    }
+  }
+  if (/^https:\/\//i.test(url)) return url
   if (/^http:\/\//i.test(url)) {
     return window.location.protocol === 'https:' ? '' : url
   }
-  return url.startsWith('/') ? url : `/${url}`
+  const normalized = url.startsWith('/') ? url : `/${url}`
+  return normalized.startsWith('/video-media/')
+    ? normalized.replace(/%40/gi, '@')
+    : normalized
 }
 
 async function loadImage() {
