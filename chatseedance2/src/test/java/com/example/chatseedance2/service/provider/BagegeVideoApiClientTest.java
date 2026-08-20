@@ -26,7 +26,7 @@ class BagegeVideoApiClientTest {
         server = new MockWebServer();
         server.start();
         SeedanceApiProperties properties = new SeedanceApiProperties(
-                server.url("/openai/v1").toString(), "test-key", "mm2-seedance2.0",
+                server.url("/openai/v1").toString(), "test-key", "ty-sd2-mini-15s",
                 3000, 3000, 3000);
         client = new BagegeVideoApiClient(new OkHttpClient(), new ObjectMapper(), properties);
     }
@@ -39,12 +39,12 @@ class BagegeVideoApiClientTest {
     @Test
     void parsesModelsAndSendsBearerToken() throws Exception {
         server.enqueue(json(200, """
-                {"data":[{"id":"mm2-seedance2.0","name":"Seedance 2.0","category":"video",
+                {"data":[{"id":"ty-sd2-mini-15s","name":"Seedance 2.0 Mini 15s","category":"video",
                 "flow_types":["text-to-video"],"input_keys":["prompt"],"cost":"17"}]}
                 """));
 
         assertThat(client.listModels()).singleElement().satisfies(model -> {
-            assertThat(model.id()).isEqualTo("mm2-seedance2.0");
+            assertThat(model.id()).isEqualTo("ty-sd2-mini-15s");
             assertThat(model.cost()).isEqualByComparingTo("17");
         });
         assertThat(server.takeRequest().getHeader("Authorization")).isEqualTo("Bearer test-key");
@@ -53,7 +53,7 @@ class BagegeVideoApiClientTest {
     @Test
     void parsesCompletedTaskResult() {
         server.enqueue(json(200, """
-                {"id":"video_123","status":"completed","model":"mm2-seedance2.0","cost":68,
+                {"id":"video_123","status":"completed","model":"ty-sd2-mini-15s","cost":68,
                 "results":[{"url":"https://cdn.example.com/result.mp4"}]}
                 """));
 

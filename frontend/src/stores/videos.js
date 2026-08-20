@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 import api from '../api'
 
 const FALLBACK_MODEL = {
-  id: 'mm2-seedance2.0',
-  name: 'Seedance 2.0',
+  id: 'ty-sd2-mini-15s',
+  name: 'Seedance 2.0 Mini 15s',
   category: 'video',
   flowTypes: [],
   inputKeys: [],

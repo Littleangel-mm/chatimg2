@@ -59,9 +59,25 @@ class VideoRequestPreparationServiceTest {
                         error -> assertThat(error.getErrorCode()).isEqualTo("TOO_MANY_IMAGES"));
     }
 
+    @Test
+    void usesReferenceVideoUrlsForTyModel() {
+        List<VideoAssetInput> assets = List.of(new VideoAssetInput(
+                VideoAssetMediaType.VIDEO,
+                VideoAssetRole.REFERENCE,
+                "https://cdn.example.com/previous.mp4",
+                null,
+                0));
+
+        PreparedVideoRequest prepared = service.prepare(request(assets), user);
+
+        assertThat(prepared.providerPayload())
+                .containsEntry("reference_video_urls", List.of("https://cdn.example.com/previous.mp4"))
+                .doesNotContainKey("video_urls");
+    }
+
     private VideoGenerationRequest request(List<VideoAssetInput> assets) {
         return new VideoGenerationRequest(
-                "Create a group scene", "mm2-seedance2.0", 5,
+                "Create a group scene", "ty-sd2-mini-15s", 5,
                 "16:9", "720p", "message-1", assets);
     }
 

@@ -113,7 +113,7 @@ public class VideoRequestPreparationService {
             payload.put("image_references", images);
         }
         if (!videos.isEmpty()) {
-            payload.put("video_urls", videos);
+            payload.put("reference_video_urls", videos);
         }
         if (!audios.isEmpty()) {
             payload.put("audio_urls", audios);

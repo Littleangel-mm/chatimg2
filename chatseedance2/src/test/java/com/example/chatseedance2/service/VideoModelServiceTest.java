@@ -24,7 +24,7 @@ class VideoModelServiceTest {
     void setUp() {
         apiClient = mock(BagegeVideoApiClient.class);
         SeedanceApiProperties properties = new SeedanceApiProperties(
-                "https://example.invalid/openai/v1", "test-key", "mm2-seedance2.0",
+                "https://example.invalid/openai/v1", "test-key", "ty-sd2-mini-15s",
                 3000, 3000, 300000);
         service = new VideoModelService(apiClient, properties);
     }
@@ -33,12 +33,12 @@ class VideoModelServiceTest {
     void exposesOnlyExactSeedanceModelWithFixedUserPrice() {
         when(apiClient.listModels()).thenReturn(List.of(
                 videoModel("manxue-2.0", "Seedance 2.0 distributor alias"),
-                videoModel("mm2-seedance2.0", "Seedance 2.0")));
+                videoModel("ty-sd2-mini-15s", "Seedance 2.0 Mini 15s")));
 
         assertThat(service.listVideoModels())
                 .singleElement()
                 .satisfies(model -> {
-                    assertThat(model.id()).isEqualTo("mm2-seedance2.0");
+                    assertThat(model.id()).isEqualTo("ty-sd2-mini-15s");
                     assertThat(model.costPerSecond()).isEqualByComparingTo("100");
                 });
     }
@@ -46,11 +46,11 @@ class VideoModelServiceTest {
     @Test
     void chargesFiveHundredCreditsForFiveSeconds() {
         when(apiClient.listModels()).thenReturn(List.of(
-                videoModel("mm2-seedance2.0", "Seedance 2.0")));
+                videoModel("ty-sd2-mini-15s", "Seedance 2.0 Mini 15s")));
 
-        assertThat(service.quote("mm2-seedance2.0", 5).credits()).isEqualTo(500);
-        assertThat(service.quote("mm2-seedance2.0", 10).credits()).isEqualTo(1000);
-        assertThat(service.quote("mm2-seedance2.0", 15).credits()).isEqualTo(1500);
+        assertThat(service.quote("ty-sd2-mini-15s", 5).credits()).isEqualTo(500);
+        assertThat(service.quote("ty-sd2-mini-15s", 10).credits()).isEqualTo(1000);
+        assertThat(service.quote("ty-sd2-mini-15s", 15).credits()).isEqualTo(1500);
     }
 
     @Test
