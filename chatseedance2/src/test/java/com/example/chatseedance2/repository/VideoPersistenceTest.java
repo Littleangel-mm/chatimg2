@@ -41,7 +41,7 @@ class VideoPersistenceTest {
     void persistsTaskAssetsAndEvents() {
         VideoGenerationTask task = newTask("VIDEO-20260730-ABCDEF01", "message-1");
         task.setRequestPayload(Map.of(
-                "model", "ty-sd2-mini-15s",
+                "model", "ty-p-sd2-fast-720",
                 "duration", 4,
                 "aspect_ratio", "9:16"));
 
@@ -65,7 +65,7 @@ class VideoPersistenceTest {
         eventRepository.saveAndFlush(event);
 
         VideoGenerationTask reloaded = taskRepository.findByTaskCode(savedTask.getTaskCode()).orElseThrow();
-        assertThat(reloaded.getRequestPayload()).containsEntry("model", "ty-sd2-mini-15s");
+        assertThat(reloaded.getRequestPayload()).containsEntry("model", "ty-p-sd2-fast-720");
         assertThat(reloaded.getVersion()).isNotNull();
         assertThat(assetRepository.findByTaskIdOrderBySortOrderAsc(savedTask.getId()))
                 .extracting(VideoGenerationAsset::getAssetRole)
@@ -124,7 +124,7 @@ class VideoPersistenceTest {
         task.setClientMessageId(clientMessageId);
         task.setUserId(1);
         task.setUserEmail("user@example.com");
-        task.setModel("ty-sd2-mini-15s");
+        task.setModel("ty-p-sd2-fast-720");
         task.setGenerationType(VideoGenerationType.TEXT_TO_VIDEO);
         task.setPrompt("A cinematic camera movement");
         task.setDurationSeconds(4);

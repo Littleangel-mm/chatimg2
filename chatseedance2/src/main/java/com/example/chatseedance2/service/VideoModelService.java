@@ -16,7 +16,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class VideoModelService {
 
-    public static final String SUPPORTED_MODEL_ID = "ty-sd2-mini-15s";
+    public static final String SUPPORTED_MODEL_ID = "ty-p-sd2-fast-720";
     public static final BigDecimal USER_CREDITS_PER_SECOND = BigDecimal.valueOf(100);
 
     private final BagegeVideoApiClient apiClient;
@@ -39,7 +39,7 @@ public class VideoModelService {
                 ? SUPPORTED_MODEL_ID
                 : requestedModel.trim();
         if (!SUPPORTED_MODEL_ID.equals(modelId)) {
-            throw new BusinessException("MODEL_NOT_ALLOWED", "当前仅支持 ty-sd2-mini-15s 模型");
+            throw new BusinessException("MODEL_NOT_ALLOWED", "当前仅支持 ty-p-sd2-fast-720 模型");
         }
         ProviderModel model = models().stream()
                 .filter(item -> modelId.equals(item.id()))

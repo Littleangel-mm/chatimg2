@@ -103,7 +103,7 @@ class VideoRequestPreparationServiceTest {
 
     private VideoGenerationRequest request(List<VideoAssetInput> assets) {
         return new VideoGenerationRequest(
-                "Create a group scene", "ty-sd2-mini-15s", 5,
+                "Create a group scene", "ty-p-sd2-fast-720", 5,
                 "16:9", "720p", "message-1", assets);
     }
 

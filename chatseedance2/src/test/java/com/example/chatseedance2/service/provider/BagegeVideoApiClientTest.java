@@ -27,7 +27,7 @@ class BagegeVideoApiClientTest {
         server = new MockWebServer();
         server.start();
         SeedanceApiProperties properties = new SeedanceApiProperties(
-                server.url("/openai/v1").toString(), "test-key", "ty-sd2-mini-15s",
+                server.url("/openai/v1").toString(), "test-key", "ty-p-sd2-fast-720",
                 3000, 3000, 3000);
         client = new BagegeVideoApiClient(new OkHttpClient(), new ObjectMapper(), properties);
     }
@@ -40,12 +40,12 @@ class BagegeVideoApiClientTest {
     @Test
     void parsesModelsAndSendsBearerToken() throws Exception {
         server.enqueue(json(200, """
-                {"data":[{"id":"ty-sd2-mini-15s","name":"Seedance 2.0 Mini 15s","category":"video",
+                {"data":[{"id":"ty-p-sd2-fast-720","name":"Seedance 2.0 Fast 720p","category":"video",
                 "flow_types":["text-to-video"],"input_keys":["prompt"],"cost":"17"}]}
                 """));
 
         assertThat(client.listModels()).singleElement().satisfies(model -> {
-            assertThat(model.id()).isEqualTo("ty-sd2-mini-15s");
+            assertThat(model.id()).isEqualTo("ty-p-sd2-fast-720");
             assertThat(model.cost()).isEqualByComparingTo("17");
         });
         RecordedRequest request = server.takeRequest();
@@ -56,7 +56,7 @@ class BagegeVideoApiClientTest {
     @Test
     void parsesCompletedTaskResult() throws InterruptedException {
         server.enqueue(json(200, """
-                {"id":"video_123","status":"completed","model":"ty-sd2-mini-15s","cost":68,
+                {"id":"video_123","status":"completed","model":"ty-p-sd2-fast-720","cost":68,
                 "results":[{"url":"https://cdn.example.com/result.mp4"}]}
                 """));
 

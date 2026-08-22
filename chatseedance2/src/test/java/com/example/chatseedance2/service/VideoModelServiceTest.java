@@ -24,7 +24,7 @@ class VideoModelServiceTest {
     void setUp() {
         apiClient = mock(BagegeVideoApiClient.class);
         SeedanceApiProperties properties = new SeedanceApiProperties(
-                "https://example.invalid/openai/v1", "test-key", "ty-sd2-mini-15s",
+                "https://example.invalid/openai/v1", "test-key", "ty-p-sd2-fast-720",
                 3000, 3000, 300000);
         service = new VideoModelService(apiClient, properties);
     }
@@ -33,12 +33,12 @@ class VideoModelServiceTest {
     void exposesOnlyExactSeedanceModelWithFixedUserPrice() {
         when(apiClient.listModels()).thenReturn(List.of(
                 videoModel("manxue-2.0", "Seedance 2.0 distributor alias"),
-                videoModel("ty-sd2-mini-15s", "Seedance 2.0 Mini 15s")));
+                videoModel("ty-p-sd2-fast-720", "Seedance 2.0 Fast 720p")));
 
         assertThat(service.listVideoModels())
                 .singleElement()
                 .satisfies(model -> {
-                    assertThat(model.id()).isEqualTo("ty-sd2-mini-15s");
+                    assertThat(model.id()).isEqualTo("ty-p-sd2-fast-720");
                     assertThat(model.costPerSecond()).isEqualByComparingTo("100");
                 });
     }
@@ -46,11 +46,11 @@ class VideoModelServiceTest {
     @Test
     void chargesFiveHundredCreditsForFiveSeconds() {
         when(apiClient.listModels()).thenReturn(List.of(
-                videoModel("ty-sd2-mini-15s", "Seedance 2.0 Mini 15s")));
+                videoModel("ty-p-sd2-fast-720", "Seedance 2.0 Fast 720p")));
 
-        assertThat(service.quote("ty-sd2-mini-15s", 5).credits()).isEqualTo(500);
-        assertThat(service.quote("ty-sd2-mini-15s", 10).credits()).isEqualTo(1000);
-        assertThat(service.quote("ty-sd2-mini-15s", 15).credits()).isEqualTo(1500);
+        assertThat(service.quote("ty-p-sd2-fast-720", 5).credits()).isEqualTo(500);
+        assertThat(service.quote("ty-p-sd2-fast-720", 10).credits()).isEqualTo(1000);
+        assertThat(service.quote("ty-p-sd2-fast-720", 15).credits()).isEqualTo(1500);
     }
 
     @Test
