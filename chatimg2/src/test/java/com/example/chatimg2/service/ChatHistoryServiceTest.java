@@ -459,7 +459,7 @@ class ChatHistoryServiceTest {
 
     private VideoGenerationResponse videoResponse(String taskCode, String status) {
         return new VideoGenerationResponse(
-                 taskCode, "assistant-video", status, status, !"completed".equals(status), "ty-p-sd2-fast-720",
+                 taskCode, "assistant-video", status, status, !"completed".equals(status), "69cf3df6f9e33413dbd1db17",
                  "text_to_video", "prompt", 5, "16:9", "720p", 10, null,
                  List.of(), List.of("/video-media/results/result.mp4"), null, null, null,
                 LocalDateTime.now(), "completed".equals(status) ? LocalDateTime.now() : null);

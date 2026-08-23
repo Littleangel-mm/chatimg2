@@ -10,13 +10,21 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Map;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class VideoModelService {
 
-    public static final String SUPPORTED_MODEL_ID = "ty-p-sd2-fast-720";
+    public static final String SUPPORTED_MODEL_ID = "69cf3df6f9e33413dbd1db17";
+    public static final String SUPPORTED_MODEL_NAME = "官渠-刷梦2.0-fast-多参-不卡脸";
+    private static final Map<String, String> LEGACY_MODEL_ALIASES = Map.of(
+            "ty-sd2-mini-15s", SUPPORTED_MODEL_ID,
+            "ty-sd2-fast-10s", SUPPORTED_MODEL_ID,
+            "ty-sd20-930-720", SUPPORTED_MODEL_ID,
+            "ty-q36-sd2-720", SUPPORTED_MODEL_ID,
+            "ty-p-sd2-fast-720", SUPPORTED_MODEL_ID);
     public static final BigDecimal USER_CREDITS_PER_SECOND = BigDecimal.valueOf(100);
 
     private final BagegeVideoApiClient apiClient;
@@ -29,17 +37,15 @@ public class VideoModelService {
                 .filter(model -> SUPPORTED_MODEL_ID.equals(model.id()))
                 .filter(ProviderModel::supportsVideo)
                 .map(model -> new VideoModelResponse(
-                        model.id(), model.name(), model.category(),
+                        model.id(), SUPPORTED_MODEL_NAME, model.category(),
                         model.flowTypes(), model.inputKeys(), USER_CREDITS_PER_SECOND))
                 .toList();
     }
 
     public Quote quote(String requestedModel, int durationSeconds) {
-        String modelId = requestedModel == null || requestedModel.isBlank()
-                ? SUPPORTED_MODEL_ID
-                : requestedModel.trim();
+        String modelId = canonicalModelId(requestedModel);
         if (!SUPPORTED_MODEL_ID.equals(modelId)) {
-            throw new BusinessException("MODEL_NOT_ALLOWED", "当前仅支持 ty-p-sd2-fast-720 模型");
+            throw new BusinessException("MODEL_NOT_ALLOWED", "当前仅支持官渠 Seedance 2.0 Fast 多参考模型");
         }
         ProviderModel model = models().stream()
                 .filter(item -> modelId.equals(item.id()))
@@ -50,6 +56,14 @@ public class VideoModelService {
         }
         int credits = Math.multiplyExact(USER_CREDITS_PER_SECOND.intValueExact(), durationSeconds);
         return new Quote(model, credits);
+    }
+
+    /** Keeps older deployed clients working while always calling the provider with the current model ID. */
+    public static String canonicalModelId(String requestedModel) {
+        String modelId = requestedModel == null || requestedModel.isBlank()
+                ? SUPPORTED_MODEL_ID
+                : requestedModel.trim();
+        return LEGACY_MODEL_ALIASES.getOrDefault(modelId, modelId);
     }
 
     private List<ProviderModel> models() {

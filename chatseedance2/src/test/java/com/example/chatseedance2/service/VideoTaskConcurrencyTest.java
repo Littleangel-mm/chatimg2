@@ -137,7 +137,7 @@ class VideoTaskConcurrencyTest {
                 user, prepared("fixed-price-message", "fixed-price-fingerprint"), quote()).task();
 
         recordService.complete(task.getId(), new com.example.chatseedance2.service.provider.ProviderTaskSnapshot(
-                "provider-task", "completed", "ty-p-sd2-fast-720", "text-to-video",
+                "provider-task", "completed", "69cf3df6f9e33413dbd1db17", "text-to-video",
                 new BigDecimal("17"), List.of("https://example.com/result.mp4"), null, Map.of()));
 
         VideoGenerationTask completed = taskRepository.findById(task.getId()).orElseThrow();
@@ -161,7 +161,7 @@ class VideoTaskConcurrencyTest {
     private PreparedVideoRequest prepared(String clientMessageId, String fingerprint) {
         return new PreparedVideoRequest(
                 "A cinematic sunrise",
-                "ty-p-sd2-fast-720",
+                "69cf3df6f9e33413dbd1db17",
                 4,
                 "9:16",
                 "720p",
@@ -170,7 +170,7 @@ class VideoTaskConcurrencyTest {
                 VideoGenerationType.TEXT_TO_VIDEO,
                 List.of(),
                 Map.of(
-                        "model", "ty-p-sd2-fast-720",
+                        "model", "69cf3df6f9e33413dbd1db17",
                         "prompt", "A cinematic sunrise",
                         "duration", 4,
                         "aspect_ratio", "9:16"));
@@ -178,7 +178,7 @@ class VideoTaskConcurrencyTest {
 
     private VideoModelService.Quote quote() {
         return new VideoModelService.Quote(new ProviderModel(
-                "ty-p-sd2-fast-720",
+                "69cf3df6f9e33413dbd1db17",
                 "Seedance 2.0",
                 "video",
                 List.of("text-to-video"),

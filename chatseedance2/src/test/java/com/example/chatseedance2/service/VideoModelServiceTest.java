@@ -24,7 +24,7 @@ class VideoModelServiceTest {
     void setUp() {
         apiClient = mock(BagegeVideoApiClient.class);
         SeedanceApiProperties properties = new SeedanceApiProperties(
-                "https://example.invalid/openai/v1", "test-key", "ty-p-sd2-fast-720",
+                "https://example.invalid/openai/v1", "test-key", "69cf3df6f9e33413dbd1db17",
                 3000, 3000, 300000);
         service = new VideoModelService(apiClient, properties);
     }
@@ -33,12 +33,12 @@ class VideoModelServiceTest {
     void exposesOnlyExactSeedanceModelWithFixedUserPrice() {
         when(apiClient.listModels()).thenReturn(List.of(
                 videoModel("manxue-2.0", "Seedance 2.0 distributor alias"),
-                videoModel("ty-p-sd2-fast-720", "Seedance 2.0 Fast 720p")));
+                videoModel("69cf3df6f9e33413dbd1db17", "Seedance 2.0 Fast 720p")));
 
         assertThat(service.listVideoModels())
                 .singleElement()
                 .satisfies(model -> {
-                    assertThat(model.id()).isEqualTo("ty-p-sd2-fast-720");
+                    assertThat(model.id()).isEqualTo("69cf3df6f9e33413dbd1db17");
                     assertThat(model.costPerSecond()).isEqualByComparingTo("100");
                 });
     }
@@ -46,11 +46,20 @@ class VideoModelServiceTest {
     @Test
     void chargesFiveHundredCreditsForFiveSeconds() {
         when(apiClient.listModels()).thenReturn(List.of(
-                videoModel("ty-p-sd2-fast-720", "Seedance 2.0 Fast 720p")));
+                videoModel("69cf3df6f9e33413dbd1db17", "Seedance 2.0 Fast 720p")));
 
-        assertThat(service.quote("ty-p-sd2-fast-720", 5).credits()).isEqualTo(500);
-        assertThat(service.quote("ty-p-sd2-fast-720", 10).credits()).isEqualTo(1000);
-        assertThat(service.quote("ty-p-sd2-fast-720", 15).credits()).isEqualTo(1500);
+        assertThat(service.quote("69cf3df6f9e33413dbd1db17", 5).credits()).isEqualTo(500);
+        assertThat(service.quote("69cf3df6f9e33413dbd1db17", 10).credits()).isEqualTo(1000);
+        assertThat(service.quote("69cf3df6f9e33413dbd1db17", 15).credits()).isEqualTo(1500);
+    }
+
+    @Test
+    void canonicalizesLegacyClientModelIdsToAvailableFastModel() {
+        when(apiClient.listModels()).thenReturn(List.of(
+                videoModel("69cf3df6f9e33413dbd1db17", "Seedance 2.0 Fast 720p")));
+
+        assertThat(service.quote("ty-sd2-mini-15s", 5).model().id())
+                .isEqualTo("69cf3df6f9e33413dbd1db17");
     }
 
     @Test

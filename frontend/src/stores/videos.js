@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 import api from '../api'
 
 const FALLBACK_MODEL = {
-  id: 'ty-p-sd2-fast-720',
-  name: 'Seedance 2.0 Fast 720p',
+  id: '69cf3df6f9e33413dbd1db17',
+  name: '官渠-刷梦2.0-fast-多参-不卡脸',
   category: 'video',
   flowTypes: [],
   inputKeys: [],

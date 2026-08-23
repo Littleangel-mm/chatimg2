@@ -4,7 +4,6 @@ import com.example.chatseedance2.dto.VideoAssetInput;
 import com.example.chatseedance2.dto.VideoGenerationRequest;
 import com.example.chatseedance2.entity.UserAccount;
 import com.example.chatseedance2.entity.VideoAssetMediaType;
-import com.example.chatseedance2.entity.VideoAssetRole;
 import com.example.chatseedance2.entity.VideoGenerationType;
 import com.example.chatseedance2.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +28,7 @@ public class VideoRequestPreparationService {
     private final ObjectMapper objectMapper;
     public PreparedVideoRequest prepare(VideoGenerationRequest request, UserAccount user) {
         String prompt = request.prompt().trim();
-        String model = blankToDefault(request.model(), VideoModelService.SUPPORTED_MODEL_ID);
+        String model = VideoModelService.canonicalModelId(request.model());
         int duration = request.durationSeconds() == null ? 5 : request.durationSeconds();
         String aspectRatio = blankToDefault(request.aspectRatio(), "16:9");
         String resolution = blankToDefault(request.resolution(), "720p");
@@ -92,41 +91,28 @@ public class VideoRequestPreparationService {
         payload.put("aspect_ratio", aspectRatio);
         payload.put("resolution", resolution);
 
-        List<Map<String, Object>> images = new ArrayList<>();
+        List<String> images = new ArrayList<>();
         List<String> videos = new ArrayList<>();
         List<String> audios = new ArrayList<>();
-        int imageIndex = 1;
         for (PreparedVideoRequest.Asset asset : assets) {
             switch (asset.mediaType()) {
                 case IMAGE -> {
-                    Map<String, Object> reference = new LinkedHashMap<>();
-                    reference.put("image_url", asset.sourceUrl());
-                    reference.put("ref_name", "image" + imageIndex++);
-                    reference.put("type", providerRole(asset.role()));
-                    images.add(reference);
+                    images.add(asset.sourceUrl());
                 }
                 case VIDEO -> videos.add(asset.sourceUrl());
                 case AUDIO -> audios.add(asset.sourceUrl());
             }
         }
         if (!images.isEmpty()) {
-            payload.put("image_references", images);
+            payload.put("image_urls", images);
         }
         if (!videos.isEmpty()) {
-            payload.put("reference_video_urls", videos);
+            payload.put("video_urls", videos);
         }
         if (!audios.isEmpty()) {
             payload.put("audio_urls", audios);
         }
         return payload;
-    }
-
-    private String providerRole(VideoAssetRole role) {
-        return switch (role) {
-            case BACKGROUND -> "background";
-            case SUBJECT -> "subject";
-            default -> "reference";
-        };
     }
 
     private VideoGenerationType generationType(List<PreparedVideoRequest.Asset> assets) {
