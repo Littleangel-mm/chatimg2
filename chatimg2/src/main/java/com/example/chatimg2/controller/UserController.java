@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/user")
@@ -64,19 +65,24 @@ public class UserController {
 
     @PostMapping(value = "/generate", consumes = "application/json")
     public ApiResponse<GenerationRecord> generate(@RequestBody GenerateRequest request, HttpServletRequest servletRequest) {
+        log.info("Image submission received: requestId={}, clientMessageId={}, type={}",
+                servletRequest.getHeader("X-Request-ID"), request.getClientMessageId(), request.getType());
         if (request.getPrompt() == null || request.getPrompt().isBlank()) {
             return ApiResponse.error(400, "请输入提示词");
         }
 
         try {
             Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && !principal.get().isUser()) {
+                return ApiResponse.error(403, "请使用用户账号生成图片");
+            }
             GenerationRecord record;
             if (principal.isPresent() && principal.get().isUser()) {
                 record = imageGenerationService.submitGenerationForUser(
                         principal.get().user(),
                         request.getPrompt(),
                         request.getType(),
-                        request.getSourceImage(),
+                        request.getSourceImages() != null ? request.getSourceImages() : (request.getSourceImage() == null ? List.of() : List.of(request.getSourceImage())),
                         request.getClientMessageId());
             } else {
                 if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
@@ -86,7 +92,7 @@ public class UserController {
                         request.getKeyCode(),
                         request.getPrompt(),
                         request.getType(),
-                        request.getSourceImage(),
+                        request.getSourceImages() != null ? request.getSourceImages() : (request.getSourceImage() == null ? List.of() : List.of(request.getSourceImage())),
                         request.getClientMessageId());
             }
             return ApiResponse.success("任务已提交，正在生成中", record);
@@ -95,41 +101,69 @@ public class UserController {
         }
     }
 
+    public ApiResponse<GenerationRecord> generateMultipart(
+            String keyCode, String prompt, String type, String clientMessageId,
+            MultipartFile sourceImage, HttpServletRequest servletRequest) {
+        return generateMultipart(keyCode, prompt, type, clientMessageId, sourceImage, null, servletRequest);
+    }
+
     @PostMapping(value = "/generate", consumes = "multipart/form-data")
     public ApiResponse<GenerationRecord> generateMultipart(
             @RequestParam(required = false) String keyCode,
             @RequestParam String prompt,
             @RequestParam(defaultValue = "img2img") String type,
             @RequestParam(required = false) String clientMessageId,
-            @RequestPart("sourceImage") MultipartFile sourceImage,
+            @RequestPart(value = "sourceImage", required = false) MultipartFile sourceImage,
+            @RequestPart(value = "sourceImages", required = false) List<MultipartFile> sourceImages,
             HttpServletRequest servletRequest) {
+        log.info("Image multipart submission received: requestId={}, clientMessageId={}, type={}, fileName={}, contentType={}, size={}",
+                servletRequest.getHeader("X-Request-ID"), clientMessageId, type,
+                sourceImage == null ? null : sourceImage.getOriginalFilename(),
+                sourceImage == null ? null : sourceImage.getContentType(),
+                sourceImage == null ? 0 : sourceImage.getSize());
         if (prompt.isBlank()) {
             return ApiResponse.error(400, "请输入提示词");
         }
-        if (sourceImage.isEmpty() || sourceImage.getSize() > 20L * 1024 * 1024) {
-            return ApiResponse.error(400, "参考图片为空或超过 20MB");
+        List<MultipartFile> files = new ArrayList<>();
+        if (sourceImages != null) files.addAll(sourceImages);
+        if (sourceImage != null && !sourceImage.isEmpty()) files.add(0, sourceImage);
+        if (files.isEmpty() || files.size() > 4 || files.stream().anyMatch(file -> file == null || file.isEmpty() || file.getSize() > 20L * 1024 * 1024)) {
+            return ApiResponse.error(400, "参考图片不能为空，最多支持 4 张且单张不超过 20MB");
         }
 
         try {
-            byte[] imageBytes = sourceImage.getBytes();
             Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && !principal.get().isUser()) {
+                return ApiResponse.error(403, "请使用用户账号生成图片");
+            }
+            if (principal.isEmpty() && keyService.activate(keyCode).isEmpty()) {
+                return ApiResponse.error(401, "请先登录或激活有效密钥");
+            }
+            List<byte[]> imageBytes = new ArrayList<>();
+            for (MultipartFile file : files) imageBytes.add(file.getBytes());
             GenerationRecord record;
             if (principal.isPresent() && principal.get().isUser()) {
-                record = imageGenerationService.submitGenerationForUserUpload(
+                record = imageBytes.size() == 1
+                        ? imageGenerationService.submitGenerationForUserUpload(
+                        principal.get().user(), prompt, type, imageBytes.get(0), clientMessageId)
+                        : imageGenerationService.submitGenerationForUserUploadMultiple(
                         principal.get().user(), prompt, type, imageBytes, clientMessageId);
             } else {
                 if (keyCode == null || keyCode.isBlank()) {
                     return ApiResponse.error(401, "请先登录或激活密钥");
                 }
-                record = imageGenerationService.submitGenerationUpload(
+                record = imageBytes.size() == 1
+                        ? imageGenerationService.submitGenerationUpload(
+                        keyCode, prompt, type, imageBytes.get(0), clientMessageId)
+                        : imageGenerationService.submitGenerationUploadMultiple(
                         keyCode, prompt, type, imageBytes, clientMessageId);
             }
             return ApiResponse.success("任务已提交，正在生成中", record);
-        } catch (RuntimeException e) {
-            return requestError(e);
         } catch (java.io.IOException e) {
             log.warn("Read source image upload failed", e);
             return ApiResponse.error(400, "参考图片上传内容无效");
+        } catch (RuntimeException e) {
+            return requestError(e);
         }
     }
 

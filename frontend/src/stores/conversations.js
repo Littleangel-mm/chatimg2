@@ -20,7 +20,11 @@ function readStored(keyCode) {
 }
 
 function writeStored(keyCode, data) {
-  localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
+  try {
+    localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
+  } catch (error) {
+    console.warn('Local chat cache is full; keeping conversation in memory', error)
+  }
 }
 
 function hasAuthToken() {
@@ -91,6 +95,7 @@ function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
     !!current.remoteImageAvailable !== !!record.remoteImageAvailable ||
     !!current.recoverable !== !!record.recoverable ||
     (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
+    JSON.stringify(current.sourceImagePaths || []) !== JSON.stringify(record.sourceImagePaths || []) ||
     (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
 
@@ -259,6 +264,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           status: msg.status,
           imagePath: msg.recordImagePath || null,
           sourceImagePath: msg.recordSourceImagePath || null,
+          sourceImagePaths: msg.recordSourceImagePaths || [],
           remoteImageAvailable: !!msg.recordRemoteImageAvailable,
           taskCode: msg.recordTaskCode || null,
           generationType: msg.recordGenerationType || null,
@@ -275,8 +281,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     for (let index = 1; index < materialized.messages.length; index++) {
       const message = materialized.messages[index]
       const previous = materialized.messages[index - 1]
-      if (message.role === 'assistant' && previous.role === 'user' && !previous.sourceImage) {
-        previous.sourceImage = message.record?.sourceImagePath || null
+      if (message.role === 'assistant' && previous.role === 'user') {
+        const images = message.record?.sourceImagePaths?.length
+          ? message.record.sourceImagePaths : (message.record?.sourceImagePath ? [message.record.sourceImagePath] : [])
+        if (images.length) {
+          previous.sourceImage = images[0]
+          previous.sourceImages = images
+        }
       }
     }
     return materialized
@@ -698,11 +709,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function attachSourceImagePath(conv, assistantMsg, record) {
-    if (!record?.sourceImagePath) return false
+    const images = record?.sourceImagePaths?.length
+      ? record.sourceImagePaths : (record?.sourceImagePath ? [record.sourceImagePath] : [])
+    if (!images.length) return false
     const userMsg = previousUserMessage(conv, assistantMsg)
     if (!userMsg) return false
-    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
-    userMsg.sourceImage = record.sourceImagePath
+    if (JSON.stringify(sourceImages(userMsg)) === JSON.stringify(images)) return false
+    userMsg.sourceImage = images[0]
+    userMsg.sourceImages = images
     return true
   }
 

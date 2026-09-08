@@ -12,6 +12,7 @@ public class ChatMessageDto {
     private Integer recordId;
     private String recordImagePath;
     private String recordSourceImagePath;
+    private java.util.List<String> recordSourceImagePaths;
     private Boolean recordRemoteImageAvailable;
     private String recordTaskCode;
     private String recordGenerationType;

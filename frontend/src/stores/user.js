@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api, { generateApi } from '../api'
+import api from '../api'
 import { useConversationsStore } from './conversations'
 import { useAuthStore } from './auth'
 import { resolveGenerationStatus } from '../utils/generation'
 import { dataUrlToFile } from '../utils/image'
 
 const CACHE_KEY = 'userCache'
+const GENERATION_SUBMIT_ATTEMPTS = 3
+const GENERATION_RETRY_DELAY_MS = 800
 let historyFetchPromise = null
 let historyFetchOwner = null
 
@@ -39,6 +41,7 @@ export const useUserStore = defineStore('user', () => {
   const generating = ref(false)
   const refreshing = ref(false)
   const syncingCredits = ref(false)
+  const pendingGenerations = new Map()
 
   const remainingCredits = computed(() => {
     const authStore = useAuthStore()
@@ -235,45 +238,107 @@ export const useUserStore = defineStore('user', () => {
       .catch(() => {})
   }
 
-  async function generate({ prompt, type, sourceImage, clientMessageId }) {
-    generating.value = true
-    try {
-      let response
-      if (type === 'img2img' && sourceImage) {
-        const form = new FormData()
-        form.append('prompt', prompt)
-        form.append('type', type)
-        if (keyCode.value) form.append('keyCode', keyCode.value)
-        if (clientMessageId) form.append('clientMessageId', clientMessageId)
-        form.append('sourceImage', dataUrlToFile(sourceImage))
-        response = await generateApi.post('/user/generate', form)
-      } else {
-        response = await generateApi.post('/user/generate', {
-          keyCode: keyCode.value,
-          prompt,
-          type,
-          sourceImage,
-          clientMessageId
-        })
+  function generationRetryable(error) {
+    if (error?.retryable === false) return false
+    const status = Number(error?.response?.status)
+    return !error?.response || status === 408 || status === 429 || status >= 500
+  }
+
+  function retryDelay(ms) {
+    return new Promise(resolve => window.setTimeout(resolve, ms))
+  }
+
+  async function reconcileGeneration(clientMessageId) {
+    if (!clientMessageId) return null
+    await fetchHistory().catch(() => {})
+    return history.value.find(record => record.clientMessageId === clientMessageId) || null
+  }
+
+  async function postGeneration(requestFactory, clientMessageId) {
+    let lastError
+    for (let attempt = 1; attempt <= GENERATION_SUBMIT_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await requestFactory()
+        const { data } = response
+        if (data.code !== 200) {
+          const error = new Error(data.message || '生成任务提交失败')
+          error.retryable = false
+          throw error
+        }
+        return data.data
+      } catch (error) {
+        lastError = error
+        if (!generationRetryable(error)) break
+        const recovered = await reconcileGeneration(clientMessageId)
+        if (recovered) return recovered
+        if (attempt < GENERATION_SUBMIT_ATTEMPTS) {
+          await retryDelay(GENERATION_RETRY_DELAY_MS * attempt)
+        }
       }
-      const { data } = response
-      if (data.code !== 200) throw new Error(data.message)
-
-      upsertHistoryRecord(data.data)
-      applyLocalGenerationCharge(data.data)
-      generating.value = false
-      await syncCreditsFromServer()
-
-      return data.data
-    } catch (e) {
-      await Promise.all([
-        syncCreditsFromServer().catch(() => {}),
-        fetchHistory().catch(() => {})
-      ])
-      throw e
-    } finally {
-      generating.value = false
     }
+    const recovered = await reconcileGeneration(clientMessageId)
+    if (recovered) return recovered
+    const error = new Error(lastError?.response?.data?.message || lastError?.message || '提交请求未被后端确认，请检查网络后重试')
+    error.cause = lastError
+    throw error
+  }
+
+  async function generateWithRetry({ prompt, type, sourceImage, sourceImages, clientMessageId }) {
+    const images = Array.isArray(sourceImages) ? sourceImages : (sourceImage ? [sourceImage] : [])
+    if (type === 'img2img' && (images.length === 0 || images.length > 4)) {
+      throw new Error('请选择 1 至 4 张参考图')
+    }
+    const payload = { keyCode: keyCode.value, prompt, type, sourceImages: images, clientMessageId }
+    const headers = clientMessageId ? { 'X-Request-ID': clientMessageId } : undefined
+    let record
+    if (type === 'img2img' && images.length) {
+      const sourceFiles = images.map((image, index) => dataUrlToFile(image, 'source-' + index))
+      try {
+        record = await postGeneration(() => {
+          const form = new FormData()
+          form.append('prompt', prompt)
+          form.append('type', type)
+          if (keyCode.value) form.append('keyCode', keyCode.value)
+          if (clientMessageId) form.append('clientMessageId', clientMessageId)
+          for (const sourceFile of sourceFiles) {
+            form.append('sourceImages', sourceFile, sourceFile.name || 'source.jpg')
+          }
+          return api.post('/user/generate', form, { headers })
+        }, clientMessageId)
+      } catch (error) {
+        const status = Number(error?.cause?.response?.status || error?.response?.status)
+        if (![404, 405, 415].includes(status)) throw error
+        record = await postGeneration(() => api.post('/user/generate', payload, { headers }), clientMessageId)
+      }
+    } else {
+      record = await postGeneration(() => api.post('/user/generate', payload, { headers }), clientMessageId)
+    }
+
+    upsertHistoryRecord(record)
+    applyLocalGenerationCharge(record)
+    generating.value = false
+    await syncCreditsFromServer()
+    return record
+  }
+
+  function generate(request) {
+    const key = request.clientMessageId || ''
+    if (key && pendingGenerations.has(key)) return pendingGenerations.get(key)
+    generating.value = true
+    const operation = generateWithRetry(request)
+      .catch(async error => {
+        await Promise.all([
+          syncCreditsFromServer().catch(() => {}),
+          fetchHistory().catch(() => {})
+        ])
+        throw error
+      })
+      .finally(() => {
+        if (key) pendingGenerations.delete(key)
+        generating.value = pendingGenerations.size > 0
+      })
+    if (key) pendingGenerations.set(key, operation)
+    return operation
   }
 
   function applyLocalGenerationCharge(record) {

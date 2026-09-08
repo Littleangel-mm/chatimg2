@@ -12,8 +12,8 @@ const authStore = useAuthStore()
 
 const prompt = ref('')
 const model = ref('gpt-image-2')
-const sourcePreview = ref('')
-const sourceBase64 = ref('')
+const sourcePreviews = ref([])
+const sourceBase64s = ref([])
 const error = ref('')
 const uploading = ref(false)
 const messagesEl = ref(null)
@@ -107,9 +107,9 @@ function scrollToBottom() {
 }
 
 async function onFileChange(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  await applySourceFile(file, file.type)
+  const files = Array.from(e.target.files || [])
+  if (!files.length) return
+  await applySourceFiles(files)
   e.target.value = ''
 }
 
@@ -122,34 +122,61 @@ function normalizeClipboardImage(file, fallbackType = 'image/png') {
 }
 
 async function applySourceFile(file, fallbackType = '') {
+  if (sourceBase64s.value.length >= 4) {
+    error.value = '最多支持 4 张参考图'
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    error.value = '单张参考图不能超过 20MB'
+    return
+  }
   const normalized = normalizeClipboardImage(file, fallbackType || 'image/png')
   if (!normalized || !normalized.type.startsWith('image/')) {
     error.value = '\u8bf7\u4e0a\u4f20\u56fe\u7247\u6587\u4ef6'
     return
   }
-  uploading.value = true
   error.value = ''
   try {
+    const owner = convStore.activeId
     const compressed = await compressImage(normalized)
-    sourcePreview.value = compressed
-    sourceBase64.value = compressed
+    if (owner !== convStore.activeId || currentType.value !== 'img2img') return
+    if (sourceBase64s.value.length >= 4) return
+    sourcePreviews.value.push(compressed)
+    sourceBase64s.value.push(compressed)
   } catch (err) {
     error.value = err?.message || '\u56fe\u7247\u5904\u7406\u5931\u8d25'
+  }
+}
+
+async function applySourceFiles(files) {
+  if (uploading.value) return
+  uploading.value = true
+  const owner = convStore.activeId
+  try {
+    for (const file of files) {
+      if (convStore.activeId !== owner) break
+      await applySourceFile(file, file.type)
+    }
   } finally {
     uploading.value = false
   }
 }
 
+function removeSource(index) {
+  sourcePreviews.value.splice(index, 1)
+  sourceBase64s.value.splice(index, 1)
+}
+
 async function onPaste(e) {
   const draft = prompt.value
   const items = Array.from(e.clipboardData?.items || [])
-  const imageItem = items.find(item => item.type?.startsWith('image/'))
-  const fileFromItem = imageItem?.getAsFile?.()
-  const fileFromList = Array.from(e.clipboardData?.files || []).find(file => {
+  const imageItems = items.filter(item => item.type?.startsWith('image/'))
+  const filesFromItems = imageItems.map(item => item.getAsFile?.()).filter(Boolean)
+  const filesFromList = Array.from(e.clipboardData?.files || []).filter(file => {
     return file.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || '')
   })
-  const file = fileFromItem || fileFromList
-  if (!file) return
+  const files = filesFromItems.length ? filesFromItems : filesFromList
+  if (!files.length) return
 
   e.preventDefault()
   if (!conversation()) {
@@ -157,7 +184,7 @@ async function onPaste(e) {
   } else if (conversation()?.type !== 'img2img') {
     convStore.setConversationType(conversation().id, 'img2img')
   }
-  await applySourceFile(file, imageItem?.type || file.type || 'image/png')
+  await applySourceFiles(files)
   nextTick(() => {
     if (draft && !prompt.value) {
       prompt.value = draft
@@ -168,8 +195,8 @@ async function onPaste(e) {
 }
 
 function clearSource() {
-  sourcePreview.value = ''
-  sourceBase64.value = ''
+  sourcePreviews.value = []
+  sourceBase64s.value = []
 }
 
 function switchChatType(type) {
@@ -226,8 +253,9 @@ async function send() {
 
   const conv = convStore.ensureActive(currentType.value || 'text2img')
   const isImg2img = conv.type === 'img2img'
+  const submittedSourceImages = isImg2img ? [...sourceBase64s.value] : []
 
-  if (isImg2img && !sourceBase64.value) {
+  if (isImg2img && !submittedSourceImages.length) {
     error.value = '\u8bf7\u5148\u4e0a\u4f20\u53c2\u8003\u56fe\u7247'
     return
   }
@@ -235,7 +263,8 @@ async function send() {
   error.value = ''
   const exchange = convStore.addExchange(conv.id, {
     prompt: text,
-    sourceImage: isImg2img ? sourceBase64.value : null,
+    sourceImage: submittedSourceImages[0] || null,
+    sourceImages: submittedSourceImages,
     type: isImg2img ? 'img2img' : 'text2img'
   })
 
@@ -247,7 +276,7 @@ async function send() {
     const record = await userStore.generate({
       prompt: text,
       type: isImg2img ? 'img2img' : 'text2img',
-      sourceImage: isImg2img ? sourceBase64.value : undefined,
+       sourceImages: submittedSourceImages,
       clientMessageId: exchange?.assistantMsg?.id
     })
     convStore.syncRecord(record)
@@ -257,6 +286,7 @@ async function send() {
   } catch (e) {
     const msg = e.response?.data?.message || e.message || '\u751f\u6210\u5931\u8d25'
     error.value = msg
+    convStore.failAssistantMessage(exchange?.assistantMsg?.id, msg)
     userStore.fetchHistory().catch(() => {})
     convStore.syncRemote().catch(() => false)
   }
@@ -405,12 +435,13 @@ onActivated(applyPendingPrompt)
         </div>
         <div v-if="conversation().type === 'img2img'" class="upload-row">
           <div v-if="uploading" class="upload-chip loading">&#x538B;&#x7F29;&#x4E2D;...</div>
-          <div v-else-if="sourcePreview" class="upload-chip">
-            <img :src="sourcePreview" alt="&#x53C2;&#x8003;&#x56FE;" />
-            <button class="clear" @click="clearSource">&times;</button>
+          <div v-for="(preview, index) in sourcePreviews" :key="index" class="upload-chip">
+            <img :src="preview" :alt="'参考图 ' + (index + 1)" />
+            <button class="clear" :disabled="uploading" :title="'移除参考图 ' + (index + 1)"
+              :aria-label="'移除参考图 ' + (index + 1)" @click="removeSource(index)">&times;</button>
           </div>
-          <label v-else class="upload-chip add">
-            <input type="file" accept="image/*" hidden @change="onFileChange" />
+          <label v-if="sourcePreviews.length < 4 && !uploading" class="upload-chip add">
+            <input type="file" accept="image/png,image/jpeg,image/webp" multiple hidden @change="onFileChange" />
             + &#x53C2;&#x8003;&#x56FE;
           </label>
         </div>
@@ -421,7 +452,7 @@ onActivated(applyPendingPrompt)
             v-model="prompt"
             class="prompt"
             :placeholder="conversation().type === 'img2img'
-              ? '\u63cf\u8ff0\u5982\u4f55\u53d8\u6362\u8fd9\u5f20\u56fe\u7247...'
+              ? '描述如何使用这些参考图...'
               : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762...'"
             rows="1"
             @keydown="onKeydown"
@@ -775,6 +806,7 @@ onActivated(applyPendingPrompt)
 }
 
 .upload-row {
+  flex-wrap: wrap;
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
@@ -897,5 +929,11 @@ onActivated(applyPendingPrompt)
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 480px) {
+  .input-row { flex-wrap: wrap; }
+  .input-row .prompt { flex: 1 0 100%; min-width: 0; }
+  .input-row .model-select { margin-left: auto; }
 }
 </style>

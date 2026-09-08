@@ -40,6 +40,7 @@ app.api.key=${API_KEY:${VITE_API_KEY:}}
 app.api.url=${API_URL:${VITE_API_BASE_URL:https://wcf.maitokens.com}}
 app.api.model.text2img=${API_MODEL_TEXT2IMG:${VITE_IMAGE_MODEL:gpt-image-2}}
 app.api.model.img2img=${API_MODEL_IMG2IMG:${VITE_IMAGE_MODEL:gpt-image-2}}
+app.api.image.multi-image-field=${API_MULTI_IMAGE_FIELD:image[]}
 app.api.image.size=${API_IMAGE_SIZE:auto}
 app.api.compat.maitokens-www-to-wcf=${API_MAITOKENS_WCF_COMPAT:true}
 

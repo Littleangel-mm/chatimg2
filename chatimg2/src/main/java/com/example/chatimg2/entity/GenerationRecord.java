@@ -61,6 +61,10 @@ public class GenerationRecord {
     @Column(name = "source_image_path", length = 500)
     private String sourceImagePath;
 
+    @Column(name = "source_image_paths", columnDefinition = "TEXT")
+    @Convert(converter = StringListConverter.class)
+    private java.util.List<String> sourceImagePaths = java.util.List.of();
+
     @Column(name = "client_message_id", length = 120)
     private String clientMessageId;
 

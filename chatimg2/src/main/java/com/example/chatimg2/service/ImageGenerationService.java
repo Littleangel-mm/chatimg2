@@ -38,6 +38,11 @@ public class ImageGenerationService {
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
                                              String sourceImageBase64, String clientMessageId) {
+        return submitGeneration(keyCode, prompt, type, sourceImageBase64 == null ? List.of() : List.of(sourceImageBase64), clientMessageId);
+    }
+
+    public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
+                                             List<String> sourceImagesBase64, String clientMessageId) {
         String normalizedPrompt = validatePrompt(prompt);
         ActivationKey key = keyService.activate(keyCode)
                 .orElseThrow(() -> new BusinessException("KEY_INVALID", "密钥无效或已禁用"));
@@ -48,13 +53,18 @@ public class ImageGenerationService {
         }
 
         String generationType = resolveGenerationType(type);
-        String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
+        List<String> sourcePaths = saveSourcesIfNeeded(generationType, sourceImagesBase64, null);
 
-        return submitForKey(key, normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+        return submitForKey(key, normalizedPrompt, generationType, sourcePaths, clientMessageId);
     }
 
     public GenerationRecord submitGenerationUpload(String keyCode, String prompt, String type,
                                                    byte[] sourceImageBytes, String clientMessageId) {
+        return submitGenerationUploadMultiple(keyCode, prompt, type, java.util.Collections.singletonList(sourceImageBytes), clientMessageId);
+    }
+
+    public GenerationRecord submitGenerationUploadMultiple(String keyCode, String prompt, String type,
+                                                          List<byte[]> sourceImageBytes, String clientMessageId) {
         String normalizedPrompt = validatePrompt(prompt);
         ActivationKey key = keyService.activate(keyCode)
                 .orElseThrow(() -> new BusinessException("KEY_INVALID", "密钥无效或已禁用"));
@@ -65,32 +75,38 @@ public class ImageGenerationService {
         }
 
         String generationType = resolveGenerationType(type);
-        String sourceImagePath = saveUploadedSourceIfNeeded(generationType, sourceImageBytes, null);
-        return submitForKey(key, normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+        List<String> sourcePaths = saveUploadedSourcesIfNeeded(generationType, sourceImageBytes, null);
+        return submitForKey(key, normalizedPrompt, generationType, sourcePaths, clientMessageId);
     }
 
     private GenerationRecord submitForKey(ActivationKey key, String normalizedPrompt, String generationType,
-                                          String sourceImagePath, String clientMessageId) {
+                                          List<String> sourcePaths, String clientMessageId) {
+        String sourceImagePath = sourcePaths.isEmpty() ? null : sourcePaths.get(0);
 
         GenerationRecordService.PendingRecord pending;
         try {
             pending = recordService.createPendingRecord(
-                    key.getId(), normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+                    key.getId(), normalizedPrompt, generationType, sourceImagePath, clientMessageId, sourcePaths);
         } catch (RuntimeException e) {
-            deleteUnusedSourceImage(sourceImagePath, null);
+            sourcePaths.forEach(path -> deleteUnusedSourceImage(path, null));
             throw e;
         }
         if (pending.created()) {
             GenerationRecord record = pending.record();
             scheduleGeneration(record, key.getId(), null, normalizedPrompt, generationType, sourceImagePath, null);
         } else {
-            deleteUnusedSourceImage(sourceImagePath, pending.record().getSourceImagePath());
+            sourcePaths.forEach(path -> deleteUnusedSourceImage(path, pending.record().getSourceImagePath()));
         }
         return prepareRecordForRead(pending.record());
     }
 
     public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
                                                     String sourceImageBase64, String clientMessageId) {
+        return submitGenerationForUser(user, prompt, type, sourceImageBase64 == null ? List.of() : List.of(sourceImageBase64), clientMessageId);
+    }
+
+    public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
+                                                    List<String> sourceImagesBase64, String clientMessageId) {
         String normalizedPrompt = validatePrompt(prompt);
         GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
         if (existing != null) {
@@ -99,13 +115,18 @@ public class ImageGenerationService {
 
         String ownerFolder = authService.safeEmailFolder(user.getEmail());
         String generationType = resolveGenerationType(type);
-        String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
+        List<String> sourcePaths = saveSourcesIfNeeded(generationType, sourceImagesBase64, ownerFolder);
 
-        return submitForUser(user, normalizedPrompt, generationType, sourceImagePath, ownerFolder, clientMessageId);
+        return submitForUser(user, normalizedPrompt, generationType, sourcePaths, ownerFolder, clientMessageId);
     }
 
     public GenerationRecord submitGenerationForUserUpload(UserAccount user, String prompt, String type,
                                                           byte[] sourceImageBytes, String clientMessageId) {
+        return submitGenerationForUserUploadMultiple(user, prompt, type, java.util.Collections.singletonList(sourceImageBytes), clientMessageId);
+    }
+
+    public GenerationRecord submitGenerationForUserUploadMultiple(UserAccount user, String prompt, String type,
+                                                                 List<byte[]> sourceImageBytes, String clientMessageId) {
         String normalizedPrompt = validatePrompt(prompt);
         GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
         if (existing != null) {
@@ -114,19 +135,20 @@ public class ImageGenerationService {
 
         String ownerFolder = authService.safeEmailFolder(user.getEmail());
         String generationType = resolveGenerationType(type);
-        String sourceImagePath = saveUploadedSourceIfNeeded(generationType, sourceImageBytes, ownerFolder);
-        return submitForUser(user, normalizedPrompt, generationType, sourceImagePath, ownerFolder, clientMessageId);
+        List<String> sourcePaths = saveUploadedSourcesIfNeeded(generationType, sourceImageBytes, ownerFolder);
+        return submitForUser(user, normalizedPrompt, generationType, sourcePaths, ownerFolder, clientMessageId);
     }
 
     private GenerationRecord submitForUser(UserAccount user, String normalizedPrompt, String generationType,
-                                           String sourceImagePath, String ownerFolder, String clientMessageId) {
+                                           List<String> sourcePaths, String ownerFolder, String clientMessageId) {
+        String sourceImagePath = sourcePaths.isEmpty() ? null : sourcePaths.get(0);
 
         GenerationRecordService.PendingRecord pending;
         try {
             pending = recordService.createPendingRecordForUser(
-                    user, normalizedPrompt, generationType, sourceImagePath, clientMessageId);
+                    user, normalizedPrompt, generationType, sourceImagePath, clientMessageId, sourcePaths);
         } catch (RuntimeException e) {
-            deleteUnusedSourceImage(sourceImagePath, null);
+            sourcePaths.forEach(path -> deleteUnusedSourceImage(path, null));
             throw e;
         }
         if (pending.created()) {
@@ -134,7 +156,7 @@ public class ImageGenerationService {
             scheduleGeneration(record, null, user.getId(), normalizedPrompt,
                     generationType, sourceImagePath, ownerFolder);
         } else {
-            deleteUnusedSourceImage(sourceImagePath, pending.record().getSourceImagePath());
+            sourcePaths.forEach(path -> deleteUnusedSourceImage(path, pending.record().getSourceImagePath()));
         }
         return prepareRecordForRead(pending.record());
     }
@@ -227,21 +249,31 @@ public class ImageGenerationService {
         return null;
     }
 
-    private String saveSourceIfNeeded(String generationType, String sourceImageBase64, String ownerFolder) {
-        if (!"img2img".equals(generationType)) {
-            return null;
+    private List<String> saveSourcesIfNeeded(String generationType, List<String> values, String ownerFolder) {
+        if (!"img2img".equals(generationType)) return List.of();
+        if (values == null || values.isEmpty() || values.size() > 4) {
+            throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传 1 至 4 张参考图片");
         }
-        if (sourceImageBase64 == null || sourceImageBase64.isBlank()) {
-            throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传参考图片");
-        }
-        return saveSourceImage(decodeBase64Image(sourceImageBase64), ownerFolder);
+        return saveSourceBatch(values.stream().map(this::decodeBase64Image).toList(), ownerFolder);
     }
 
-    private String saveUploadedSourceIfNeeded(String generationType, byte[] sourceImageBytes, String ownerFolder) {
-        if (!"img2img".equals(generationType)) {
-            return null;
+    private List<String> saveUploadedSourcesIfNeeded(String generationType, List<byte[]> values, String ownerFolder) {
+        if (!"img2img".equals(generationType)) return List.of();
+        if (values == null || values.isEmpty() || values.size() > 4) {
+            throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传 1 至 4 张参考图片");
         }
-        return saveSourceImage(decodeUploadedImage(sourceImageBytes), ownerFolder);
+        return saveSourceBatch(values.stream().map(this::decodeUploadedImage).toList(), ownerFolder);
+    }
+
+    private List<String> saveSourceBatch(List<DecodedImage> images, String ownerFolder) {
+        List<String> paths = new java.util.ArrayList<>();
+        try {
+            for (DecodedImage image : images) paths.add(saveSourceImage(image, ownerFolder));
+            return List.copyOf(paths);
+        } catch (RuntimeException error) {
+            paths.forEach(path -> deleteUnusedSourceImage(path, null));
+            throw error;
+        }
     }
 
     private DecodedImage decodeUploadedImage(byte[] bytes) {
@@ -259,6 +291,9 @@ public class ImageGenerationService {
     }
 
     private DecodedImage decodeBase64Image(String base64) {
+        if (base64 == null || base64.isBlank()) {
+            throw new BusinessException("SOURCE_IMAGE_EMPTY", "参考图片内容为空");
+        }
         if (base64.length() > MAX_SOURCE_IMAGE_BASE64_CHARS) {
             throw new BusinessException("SOURCE_IMAGE_TOO_LARGE", "参考图片不能超过 20MB");
         }
@@ -337,6 +372,8 @@ public class ImageGenerationService {
             } else {
                 recordService.markFailed(record.getId(), keyId, "生成任务繁忙，请稍后重试");
             }
+            List<String> paths = record.getSourceImagePaths();
+            if (paths != null) paths.forEach(path -> deleteUnusedSourceImage(path, null));
             deleteUnusedSourceImage(sourceImagePath, null);
             throw new BusinessException("GENERATION_QUEUE_FULL", "当前生成任务较多，请稍后重试", e);
         }

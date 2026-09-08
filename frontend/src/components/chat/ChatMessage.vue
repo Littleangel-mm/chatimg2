@@ -18,7 +18,11 @@ const props = defineProps({
 
 const convStore = useConversationsStore()
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
-const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
+const sourceImageUrls = computed(() => {
+  const images = props.message.sourceImages?.length
+    ? props.message.sourceImages : (props.message.sourceImage ? [props.message.sourceImage] : [])
+  return images.map(path => normalizeImageUrl(path)).filter(Boolean)
+})
 const generationRecord = computed(() => props.message.record || {
   status: props.message.status,
   recoverable: props.message.recoverable,
@@ -109,13 +113,16 @@ function openPreview(url) {
     </div>
     <div class="bubble">
       <template v-if="message.role === 'user'">
-        <img
-          v-if="sourceImageUrl"
+        <div v-if="sourceImageUrls.length" class="source-gallery">
+          <img
+          v-for="(sourceImageUrl, index) in sourceImageUrls"
+          :key="index"
           :src="sourceImageUrl"
           alt="参考图"
           class="source-thumb"
           @click="openPreview(sourceImageUrl)"
-        />
+          />
+        </div>
         <p class="text">{{ message.content }}</p>
       </template>
 
@@ -227,8 +234,16 @@ function openPreview(url) {
   box-shadow: 0 6px 16px rgba(224, 155, 176, 0.32);
 }
 
+.source-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+}
+
 .source-thumb {
-  max-width: 200px;
+  max-width: min(200px, 100%);
   max-height: 160px;
   border-radius: 12px;
   margin-bottom: 8px;

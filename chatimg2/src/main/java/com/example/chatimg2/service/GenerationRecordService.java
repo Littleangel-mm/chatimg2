@@ -41,6 +41,11 @@ public class GenerationRecordService {
 
     public PendingRecord createPendingRecord(Integer keyId, String prompt, String generationType,
                                              String sourceImagePath, String clientMessageId) {
+        return createPendingRecord(keyId, prompt, generationType, sourceImagePath, clientMessageId, java.util.List.of());
+    }
+
+    public PendingRecord createPendingRecord(Integer keyId, String prompt, String generationType,
+                                             String sourceImagePath, String clientMessageId, java.util.List<String> sourcePaths) {
         String normalizedMessageId = normalizeClientMessageId(clientMessageId);
         return runDbOperationWithRetry(() -> requireTransactionResult(transactionTemplate.execute(status -> {
             ActivationKey key = keyRepository.findByIdForUpdate(keyId)
@@ -57,14 +62,21 @@ public class GenerationRecordService {
             }
             key.setUsedCredits(key.getUsedCredits() + CREDITS_PER_GENERATION);
             keyRepository.save(key);
-            GenerationRecord record = recordRepository.save(newPendingRecord(
-                    keyId, null, null, prompt, generationType, sourceImagePath, normalizedMessageId));
+            GenerationRecord record = newPendingRecord(
+                    keyId, null, null, prompt, generationType, sourceImagePath, normalizedMessageId);
+            record.setSourceImagePaths(java.util.List.copyOf(sourcePaths));
+            record = recordRepository.save(record);
             return new PendingRecord(record, true);
         }), "创建生成记录失败"));
     }
 
     public PendingRecord createPendingRecordForUser(UserAccount user, String prompt, String generationType,
                                                     String sourceImagePath, String clientMessageId) {
+        return createPendingRecordForUser(user, prompt, generationType, sourceImagePath, clientMessageId, java.util.List.of());
+    }
+
+    public PendingRecord createPendingRecordForUser(UserAccount user, String prompt, String generationType,
+                                                    String sourceImagePath, String clientMessageId, java.util.List<String> sourcePaths) {
         String normalizedMessageId = normalizeClientMessageId(clientMessageId);
         return runDbOperationWithRetry(() -> requireTransactionResult(transactionTemplate.execute(status -> {
             UserAccount lockedUser = userRepository.findByIdForUpdate(user.getId())
@@ -80,14 +92,16 @@ public class GenerationRecordService {
             lockedUser.setUsedCredits(lockedUser.getUsedCredits() + CREDITS_PER_GENERATION);
             userRepository.save(lockedUser);
             Integer chargedKeyId = keyService.syncUserUsageToBoundKeys(lockedUser).orElse(null);
-            GenerationRecord record = recordRepository.save(newPendingRecord(
+            GenerationRecord record = newPendingRecord(
                     chargedKeyId,
                     lockedUser.getId(),
                     lockedUser.getEmail(),
                     prompt,
                     generationType,
                     sourceImagePath,
-                    normalizedMessageId));
+                    normalizedMessageId);
+            record.setSourceImagePaths(java.util.List.copyOf(sourcePaths));
+            record = recordRepository.save(record);
             return new PendingRecord(record, true);
         }), "创建生成记录失败"));
     }

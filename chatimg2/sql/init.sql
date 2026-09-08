@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS generation_records (
     local_path VARCHAR(500),
     generation_type VARCHAR(20) DEFAULT 'text2img',
     source_image_path VARCHAR(500),
+    source_image_paths TEXT,
     credits_cost INTEGER NOT NULL DEFAULT 20,
     status VARCHAR(20) DEFAULT 'processing',
     error_message TEXT,

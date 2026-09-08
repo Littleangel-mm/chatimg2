@@ -263,6 +263,7 @@ public class ChatHistoryService {
         } else if (record != null) {
             dto.setRecordImagePath(recordViewService.resolveImagePath(record));
             dto.setRecordSourceImagePath(record.getSourceImagePath());
+            dto.setRecordSourceImagePaths(record.getSourceImagePaths());
             dto.setRecordRemoteImageAvailable(record.isRemoteImageAvailable());
             dto.setRecordTaskCode(record.getTaskCode());
             dto.setRecordGenerationType(record.getGenerationType());

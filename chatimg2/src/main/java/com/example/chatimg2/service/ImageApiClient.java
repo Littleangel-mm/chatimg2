@@ -43,6 +43,9 @@ public class ImageApiClient {
     @Value("${app.api.model.text2img:gpt-image-2}")
     private String defaultText2imgModel;
 
+    @Value("${app.api.image.multi-image-field:image[]}")
+    private String multiImageField = "image[]";
+
     @Value("${app.api.poll.initial-delay-ms:5000}")
     private long pollInitialDelayMs;
 
@@ -143,6 +146,10 @@ public class ImageApiClient {
     }
 
     public String imageEdit(String prompt, byte[] imageBytes, String requestedModel) {
+        return imageEdit(prompt, List.of(imageBytes), requestedModel);
+    }
+
+    public String imageEdit(String prompt, List<byte[]> imageBytes, String requestedModel) {
         validateConfiguration();
         ApiCallException lastError = null;
         List<String> models = buildImageEditModels(requestedModel);
@@ -169,22 +176,27 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的图生图模型");
     }
 
-    private String submitImageEdit(String prompt, byte[] imageBytes, String model) {
+    private String submitImageEdit(String prompt, List<byte[]> imageBytes, String model) {
         String size = resolveRequestedSize(prompt);
-        String mediaType = ImageContentSupport.detectMediaType(imageBytes);
-        if (mediaType == null) {
-            throw new BusinessException("INVALID_SOURCE_IMAGE", "参考图片格式无效，请重新上传 JPEG、PNG 或 WebP 图片");
+        if (imageBytes == null || imageBytes.isEmpty() || imageBytes.size() > 4) {
+            throw new BusinessException("INVALID_SOURCE_IMAGE", "图生图支持 1 至 4 张参考图片");
         }
-        String fileName = "source." + ImageContentSupport.extension(mediaType);
-        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
-        MultipartBody body = new MultipartBody.Builder()
+        MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("image", fileName, fileBody)
                 .addFormDataPart("prompt", prompt)
                 .addFormDataPart("model", model)
                 .addFormDataPart("n", "1")
-                .addFormDataPart("size", size)
-                .build();
+                .addFormDataPart("size", size);
+        for (int index = 0; index < imageBytes.size(); index++) {
+            byte[] bytes = imageBytes.get(index);
+            String mediaType = ImageContentSupport.detectMediaType(bytes);
+            if (mediaType == null) throw new BusinessException("INVALID_SOURCE_IMAGE", "参考图片格式无效，请重新上传 JPEG、PNG 或 WebP 图片");
+            String filename = imageBytes.size() == 1 ? "source." : "source-" + index + ".";
+            bodyBuilder.addFormDataPart(imageBytes.size() == 1 ? "image" : multiImageField,
+                    filename + ImageContentSupport.extension(mediaType),
+                    RequestBody.create(bytes, MediaType.parse(mediaType)));
+        }
+        MultipartBody body = bodyBuilder.build();
 
         Request request = new Request.Builder()
                 .url(getApiBaseUrl() + "/v1/images/edits")
@@ -192,7 +204,7 @@ public class ImageApiClient {
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
+        log.info("Img2img using model: {}, imageCount={}, size={}", model, imageBytes.size(), size);
         return resolveImageFromSubmit(request);
     }
 

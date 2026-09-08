@@ -266,6 +266,36 @@ class ImageApiClientTest {
         return client;
     }
 
+    @Test
+    void imageEditSendsAllImagesInOrder() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            configuredClient(server).imageEdit("combine", List.of(JPEG_IMAGE, PNG_IMAGE), "gpt-image-2");
+            assertThat(captured.get().body())
+                    .contains("name=\"image[]\"; filename=\"source-0.jpg\"")
+                    .contains("name=\"image[]\"; filename=\"source-1.png\"");
+            assertThat(captured.get().body().indexOf("source-0.jpg"))
+                    .isLessThan(captured.get().body().indexOf("source-1.png"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsInvalidSecondImageWithoutCallingProvider() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            assertThatThrownBy(() -> configuredClient(server).imageEdit(
+                    "combine", List.of(JPEG_IMAGE, new byte[]{1, 2}), "gpt-image-2"))
+                    .isInstanceOf(BusinessException.class);
+            assertThat(captured.get()).isNull();
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private HttpServer startServer(String path, AtomicReference<CapturedRequest> captured) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(path, exchange -> {

@@ -9,6 +9,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
+import java.io.IOException;
+import com.example.chatimg2.repository.GenerationRecordRepository;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -20,9 +22,10 @@ import java.util.Optional;
 public class AsyncGenerationExecutor {
 
     private final ImageApiClient imageApiClient;
-    private final ImageBackupService imageBackupService;
+    private final ImageResultDeliveryService imageResultDeliveryService;
     private final GenerationRecordService recordService;
     private final ImageStorageConfig storageConfig;
+    private final GenerationRecordRepository recordRepository;
     private final DistributedLockService distributedLockService;
 
     @Value("${app.generation.lock.ttl-ms:1800000}")
@@ -77,8 +80,14 @@ public class AsyncGenerationExecutor {
                                      String sourceImagePath, String ownerFolder, long startedAt) throws Exception {
         String imageUrl;
         if ("img2img".equals(generationType)) {
-            Path sourcePath = resolveSourcePath(sourceImagePath);
-            byte[] imageBytes = Files.readAllBytes(sourcePath);
+            List<String> savedPaths = recordRepository.findById(recordId)
+                    .map(com.example.chatimg2.entity.GenerationRecord::getSourceImagePaths)
+                    .filter(paths -> !paths.isEmpty())
+                    .orElseGet(() -> List.of(sourceImagePath));
+            List<Path> sourcePaths = savedPaths.stream().map(this::resolveSourcePath).toList();
+            List<byte[]> imageBytes = sourcePaths.stream().map(path -> {
+                try { return Files.readAllBytes(path); } catch (IOException e) { throw new RuntimeException(e); }
+            }).toList();
             imageUrl = imageApiClient.imageEdit(
                     prompt,
                     imageBytes,
@@ -87,9 +96,13 @@ public class AsyncGenerationExecutor {
             imageUrl = imageApiClient.textToImage(prompt, text2imgModel, List.of());
         }
 
-        ImageBackupService.BackupResult backup = imageBackupService.backupSync(imageUrl, taskCode, ownerFolder);
-        recordService.markLocalImageAvailable(recordId, backup.imagePath());
-        log.info("Async generation completed: recordId={}, taskCode={}, elapsedMs={}",
+        recordService.markRemoteImageAvailable(recordId, imageUrl);
+        try {
+            imageResultDeliveryService.retrySavedRemoteImage(recordId);
+        } catch (RuntimeException error) {
+            log.warn("Generated image backup was not queued: recordId={}, taskCode={}", recordId, taskCode, error);
+        }
+        log.info("Async generation provider result received: recordId={}, taskCode={}, elapsedMs={}",
                 recordId, taskCode, System.currentTimeMillis() - startedAt);
     }
 
@@ -158,4 +171,5 @@ public class AsyncGenerationExecutor {
     private Path resolveSourcePath(String sourceImagePath) {
         return storageConfig.resolveSourceImageFile(sourceImagePath);
     }
+
 }
