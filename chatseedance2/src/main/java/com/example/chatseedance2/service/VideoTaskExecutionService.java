@@ -6,18 +6,20 @@ import com.example.chatseedance2.exception.ProviderApiException;
 import com.example.chatseedance2.repository.VideoGenerationTaskRepository;
 import com.example.chatseedance2.service.provider.BagegeVideoApiClient;
 import com.example.chatseedance2.service.provider.ProviderTaskSnapshot;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class VideoTaskExecutionService {
 
     private final BagegeVideoApiClient apiClient;
@@ -25,15 +27,69 @@ public class VideoTaskExecutionService {
     private final VideoGenerationTaskRepository taskRepository;
     private final DistributedLockService lockService;
     private final VideoProperties properties;
+    private final Executor taskExecutor;
+    private final Set<Long> dispatchedTasks = ConcurrentHashMap.newKeySet();
 
-    @Async("videoTaskExecutor")
-    public void submitAsync(Long taskId) {
-        withTaskLock(taskId, () -> submitLocked(taskId));
+    public VideoTaskExecutionService(BagegeVideoApiClient apiClient,
+                                     VideoTaskRecordService recordService,
+                                     VideoGenerationTaskRepository taskRepository,
+                                     DistributedLockService lockService,
+                                     VideoProperties properties,
+                                     @Qualifier("videoTaskExecutor") Executor taskExecutor) {
+        this.apiClient = apiClient;
+        this.recordService = recordService;
+        this.taskRepository = taskRepository;
+        this.lockService = lockService;
+        this.properties = properties;
+        this.taskExecutor = taskExecutor;
     }
 
-    @Async("videoTaskExecutor")
-    public void pollAsync(Long taskId) {
-        withTaskLock(taskId, () -> pollLocked(taskId));
+    public boolean submitAsync(Long taskId) {
+        return dispatch(taskId, VideoTaskRecordService.DispatchType.SUBMIT,
+                () -> withTaskLock(taskId, () -> submitLocked(taskId)));
+    }
+
+    public boolean pollAsync(Long taskId) {
+        return dispatch(taskId, VideoTaskRecordService.DispatchType.POLL,
+                () -> withTaskLock(taskId, () -> pollLocked(taskId)));
+    }
+
+    private boolean dispatch(Long taskId, VideoTaskRecordService.DispatchType type, Runnable action) {
+        if (!dispatchedTasks.add(taskId)) {
+            return false;
+        }
+        Optional<VideoTaskRecordService.DispatchClaim> claim;
+        try {
+            claim = recordService.claimForDispatch(taskId, type);
+        } catch (RuntimeException error) {
+            dispatchedTasks.remove(taskId);
+            throw error;
+        }
+        if (claim.isEmpty()) {
+            dispatchedTasks.remove(taskId);
+            return false;
+        }
+        try {
+            taskExecutor.execute(() -> {
+                try {
+                    action.run();
+                } finally {
+                    dispatchedTasks.remove(taskId);
+                }
+            });
+            return true;
+        } catch (RuntimeException error) {
+            dispatchedTasks.remove(taskId);
+            try {
+                recordService.releaseDispatchClaim(claim.get());
+            } catch (RuntimeException releaseError) {
+                error.addSuppressed(releaseError);
+            }
+            if (error instanceof TaskRejectedException rejected) {
+                throw rejected;
+            }
+            throw error;
+        }
     }
 
     private void submitLocked(Long taskId) {

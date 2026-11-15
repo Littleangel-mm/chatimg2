@@ -48,6 +48,7 @@ public class GenerationRecoveryService {
     )
     public void recoverOnSchedule() {
         reconcileLateLocalImages("scheduled");
+        recoverStaleProcessingTasks("scheduled");
     }
 
     private void recoverStaleProcessingTasks(String trigger) {

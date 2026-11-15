@@ -5,11 +5,6 @@ const api = axios.create({
   timeout: 60000
 })
 
-const generateApi = axios.create({
-  baseURL: '/api',
-  timeout: 600000
-})
-
 function authToken() {
   return localStorage.getItem('authToken') || ''
 }
@@ -24,7 +19,6 @@ function attachAuth(config) {
 }
 
 api.interceptors.request.use(attachAuth)
-generateApi.interceptors.request.use(attachAuth)
 
 /** 灵感画廊媒体仍走静态资源，视频播放可以继续使用浏览器 Range 请求 */
 export const IMAGE_BASE_PATH = '/img/'
@@ -82,10 +76,12 @@ function isApiMediaPath(path) {
 }
 
 export default api
-export { generateApi }
 
 export function getImageUrl(record) {
   if (!record) return ''
+  if (record.taskCode) {
+    return `/api/images/results/${encodeURIComponent(record.taskCode)}`
+  }
   const path = record.imagePath || record.imageUrl || ''
   return normalizeImageUrl(path, API_IMAGE_BASE_PATH)
 }

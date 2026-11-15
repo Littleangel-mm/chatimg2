@@ -8,9 +8,9 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
@@ -29,7 +29,9 @@ public class DistributedLockService {
             thread.setDaemon(true);
             return thread;
         };
-        this.leaseExecutor = Executors.newSingleThreadScheduledExecutor(factory);
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1, factory);
+        executor.setRemoveOnCancelPolicy(true);
+        this.leaseExecutor = executor;
     }
 
     public Optional<LockToken> tryAcquire(String lockKey, Duration ttl) {

@@ -301,7 +301,8 @@ export const useUserStore = defineStore('user', () => {
           if (keyCode.value) form.append('keyCode', keyCode.value)
           if (clientMessageId) form.append('clientMessageId', clientMessageId)
           for (const sourceFile of sourceFiles) {
-            form.append('sourceImages', sourceFile, sourceFile.name || 'source.jpg')
+            form.append(sourceFiles.length === 1 ? 'sourceImage' : 'sourceImages',
+              sourceFile, sourceFile.name || 'source.jpg')
           }
           return api.post('/user/generate', form, { headers })
         }, clientMessageId)

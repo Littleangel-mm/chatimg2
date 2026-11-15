@@ -2,8 +2,6 @@
 import {
   computed,
   nextTick,
-  onActivated,
-  onDeactivated,
   onMounted,
   onUnmounted,
   reactive,
@@ -38,7 +36,6 @@ const promptEl = ref(null)
 const feedEl = ref(null)
 const avatarFailed = ref(false)
 const preparingSubmission = ref(false)
-let pollTimer = null
 
 const durations = [5, 10, 15]
 const ratios = ['16:9', '9:16', '1:1', '4:3', '3:4', '2.39:1']
@@ -359,7 +356,6 @@ async function submit() {
     clearReferenceUrls()
     await userStore.syncCreditsFromServer().catch(() => {})
     scrollToLatest()
-    startPolling()
   } catch (submitError) {
     await Promise.allSettled([
       videosStore.loadHistory(),
@@ -371,12 +367,6 @@ async function submit() {
       .find(message => message.id === exchange.assistantMsg.id)
     if (recovered?.videoTask) {
       error.value = ''
-      startPolling()
-      return
-    }
-    if (submitError.recoverable) {
-      error.value = ''
-      startPolling()
       return
     }
     error.value = submitError.message
@@ -455,26 +445,6 @@ function resultUrl(path) {
   return path.startsWith('/') ? path : `/${path}`
 }
 
-async function pollProcessing() {
-  if (document.hidden || !videosStore.processingTasks.length) return
-  const before = new Map(videosStore.processingTasks.map(task => [task.taskCode, task.status]))
-  await videosStore.refreshProcessing()
-  convStore.syncVideoTasks(videosStore.tasks)
-  const completed = videosStore.tasks.some(task => before.has(task.taskCode) && task.status !== 'processing')
-  if (completed) userStore.syncCreditsFromServer().catch(() => {})
-}
-
-function startPolling() {
-  if (pollTimer) return
-  pollTimer = window.setInterval(pollProcessing, 5000)
-}
-
-function stopPolling() {
-  if (!pollTimer) return
-  window.clearInterval(pollTimer)
-  pollTimer = null
-}
-
 async function initialize() {
   const ownerKey = authStore.user?.email || userStore.keyCode
   if (ownerKey) convStore.bindKeyCode(ownerKey)
@@ -489,14 +459,10 @@ async function initialize() {
   if (failure && !videosStore.tasks.length) {
     error.value = failure.reason?.message || '视频功能加载失败，请稍后重试'
   }
-  startPolling()
 }
 
 onMounted(initialize)
-onActivated(startPolling)
-onDeactivated(stopPolling)
 onUnmounted(() => {
-  stopPolling()
   clearReference()
 })
 </script>

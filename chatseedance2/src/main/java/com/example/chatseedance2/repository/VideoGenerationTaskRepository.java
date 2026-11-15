@@ -56,8 +56,8 @@ public interface VideoGenerationTaskRepository extends JpaRepository<VideoGenera
     @Query("""
             select task from VideoGenerationTask task
             where task.status in :statuses
-              and (task.providerTaskId is not null or task.status = com.example.chatseedance2.entity.VideoTaskStatus.SUBMITTING)
-              and (task.nextPollAt is null or task.nextPollAt <= :now)
+              and (task.status = com.example.chatseedance2.entity.VideoTaskStatus.SUBMITTING
+                   or (task.nextPollAt is not null and task.nextPollAt <= :now))
             order by task.createdAt asc
             """)
     List<VideoGenerationTask> findReadyForRecovery(

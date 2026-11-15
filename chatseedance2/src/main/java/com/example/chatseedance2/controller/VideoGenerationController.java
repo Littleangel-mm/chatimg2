@@ -17,6 +17,7 @@ import com.example.chatseedance2.service.VideoStorageService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,6 +38,7 @@ import java.util.List;
 @RequestMapping("/api/video")
 @RequireRole(AppRole.USER)
 @RequiredArgsConstructor
+@Slf4j
 public class VideoGenerationController {
 
     private final AuthService authService;
@@ -49,7 +51,13 @@ public class VideoGenerationController {
     public ApiResponse<VideoGenerationResponse> submit(
             @Valid @RequestBody VideoGenerationRequest body,
             HttpServletRequest request) {
-        return ApiResponse.success("视频任务已提交", generationService.submit(user(request), body));
+        String requestId = request.getHeader("X-Request-ID");
+        log.info("Video submission received: requestId={}, clientMessageId={}, assets={}",
+                requestId, body.clientMessageId(), body.assets() == null ? 0 : body.assets().size());
+        VideoGenerationResponse response = generationService.submit(user(request), body);
+        log.info("Video submission persisted: requestId={}, clientMessageId={}, taskCode={}",
+                requestId, body.clientMessageId(), response.taskCode());
+        return ApiResponse.success("视频任务已提交", response);
     }
 
     @GetMapping("/generations")

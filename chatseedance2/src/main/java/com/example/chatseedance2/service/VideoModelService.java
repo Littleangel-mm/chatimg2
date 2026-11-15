@@ -17,14 +17,16 @@ import java.util.List;
 @RequiredArgsConstructor
 public class VideoModelService {
 
-    public static final String SUPPORTED_MODEL_ID = "69cf3df6f9e33413dbd1db17";
-    public static final String SUPPORTED_MODEL_NAME = "官渠-刷梦2.0-fast-多参-不卡脸";
+    public static final String SUPPORTED_MODEL_ID = "ty-me-sd20-933";
+    public static final String SUPPORTED_MODEL_NAME = "官渠-Seedance 2.0 933 稳定满血版";
     private static final Map<String, String> LEGACY_MODEL_ALIASES = Map.of(
+            "69cf3df6f9e33413dbd1db17", SUPPORTED_MODEL_ID,
+            "ty-p-sd2-fast-720", SUPPORTED_MODEL_ID,
+            "ty-p-sd2-720", SUPPORTED_MODEL_ID,
             "ty-sd2-mini-15s", SUPPORTED_MODEL_ID,
             "ty-sd2-fast-10s", SUPPORTED_MODEL_ID,
             "ty-sd20-930-720", SUPPORTED_MODEL_ID,
-            "ty-q36-sd2-720", SUPPORTED_MODEL_ID,
-            "ty-p-sd2-fast-720", SUPPORTED_MODEL_ID);
+            "ty-q36-sd2-720", SUPPORTED_MODEL_ID);
     public static final BigDecimal USER_CREDITS_PER_SECOND = BigDecimal.valueOf(100);
 
     private final BagegeVideoApiClient apiClient;

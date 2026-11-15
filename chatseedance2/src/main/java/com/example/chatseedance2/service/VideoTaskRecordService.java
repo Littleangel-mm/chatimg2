@@ -120,6 +120,47 @@ public class VideoTaskRecordService {
     }
 
     @Transactional
+    public Optional<DispatchClaim> claimForDispatch(Long taskId, DispatchType type) {
+        VideoGenerationTask task = lockTask(taskId);
+        if (task.getStatus().isTerminal()) {
+            return Optional.empty();
+        }
+        boolean submission = type == DispatchType.SUBMIT;
+        if (submission != (task.getProviderTaskId() == null)) {
+            return Optional.empty();
+        }
+        LocalDateTime now = LocalDateTime.now();
+        boolean submitWithoutSchedule = submission
+                && task.getStatus() == VideoTaskStatus.SUBMITTING
+                && task.getNextPollAt() == null;
+        if (!submitWithoutSchedule && (task.getNextPollAt() == null || task.getNextPollAt().isAfter(now))) {
+            return Optional.empty();
+        }
+        LocalDateTime claimedUntil = now.plus(Duration.ofMillis(properties.taskLockTtlMs()));
+        task.setNextPollAt(claimedUntil);
+        taskRepository.save(task);
+        return Optional.of(new DispatchClaim(taskId, claimedUntil));
+    }
+
+    @Transactional
+    public void releaseDispatchClaim(DispatchClaim claim) {
+        VideoGenerationTask task = lockTask(claim.taskId());
+        if (!task.getStatus().isTerminal() && sameInstant(claim.claimedUntil(), task.getNextPollAt())) {
+            task.setNextPollAt(LocalDateTime.now());
+            taskRepository.save(task);
+        }
+    }
+
+    @Transactional
+    public void requestImmediatePoll(Long taskId) {
+        VideoGenerationTask task = lockTask(taskId);
+        if (!task.getStatus().isTerminal() && task.getProviderTaskId() != null) {
+            task.setNextPollAt(LocalDateTime.now());
+            taskRepository.save(task);
+        }
+    }
+
+    @Transactional
     public void markAccepted(Long taskId, ProviderTaskSnapshot snapshot) {
         VideoGenerationTask task = lockTask(taskId);
         if (task.getStatus().isTerminal()) {
@@ -369,6 +410,11 @@ public class VideoTaskRecordService {
         return number == null ? 0 : number;
     }
 
+    private boolean sameInstant(LocalDateTime left, LocalDateTime right) {
+        return left != null && right != null
+                && Math.abs(Duration.between(left, right).toMillis()) < 1000L;
+    }
+
     private String truncate(String value, int maxLength) {
         if (value == null || value.isBlank()) {
             return null;
@@ -381,5 +427,13 @@ public class VideoTaskRecordService {
     }
 
     public record Submission(Long taskId, String taskCode, Map<String, Object> payload) {
+    }
+
+    public enum DispatchType {
+        SUBMIT,
+        POLL
+    }
+
+    public record DispatchClaim(Long taskId, LocalDateTime claimedUntil) {
     }
 }

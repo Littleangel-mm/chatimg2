@@ -24,6 +24,8 @@ public class AsyncConfig {
         executor.setMaxPoolSize(Math.max(coreSize, settings.maxSize()));
         executor.setQueueCapacity(Math.max(0, settings.queueCapacity()));
         executor.setThreadNamePrefix("video-task-");
+        executor.setKeepAliveSeconds(60);
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

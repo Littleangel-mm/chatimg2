@@ -97,6 +97,12 @@ class VideoPersistenceTest {
         later.setNextPollAt(LocalDateTime.now().plusMinutes(5));
         taskRepository.save(later);
 
+        VideoGenerationTask unclaimed = newTask("VIDEO-20260730-ABCDEF05", "message-5");
+        unclaimed.setStatus(VideoTaskStatus.PROCESSING);
+        unclaimed.setProviderTaskId("job_without_poll_time");
+        unclaimed.setNextPollAt(null);
+        taskRepository.save(unclaimed);
+
         VideoGenerationTask completed = newTask("VIDEO-20260730-ABCDEF04", "message-4");
         completed.setStatus(VideoTaskStatus.COMPLETED);
         completed.setProviderTaskId("job_completed");

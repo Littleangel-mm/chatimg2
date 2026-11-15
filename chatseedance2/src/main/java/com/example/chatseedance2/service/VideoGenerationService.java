@@ -108,6 +108,7 @@ public class VideoGenerationService {
             throw new BusinessException("TASK_TERMINAL", "终态任务不需要恢复");
         }
         if (task.getProviderTaskId() != null && !task.getProviderTaskId().isBlank()) {
+            recordService.requestImmediatePoll(task.getId());
             executionService.pollAsync(task.getId());
         } else if (task.getSubmittedAt() == null) {
             executionService.submitAsync(task.getId());

@@ -36,6 +36,8 @@ public class AsyncConfig {
         executor.setMaxPoolSize(Math.max(coreSize, generationMaxSize));
         executor.setQueueCapacity(Math.max(0, generationQueueCapacity));
         executor.setThreadNamePrefix("gen-");
+        executor.setKeepAliveSeconds(60);
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();
@@ -50,6 +52,8 @@ public class AsyncConfig {
         executor.setMaxPoolSize(Math.max(coreSize, backupMaxSize));
         executor.setQueueCapacity(Math.max(0, backupQueueCapacity));
         executor.setThreadNamePrefix("image-backup-");
+        executor.setKeepAliveSeconds(60);
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(15);
         executor.initialize();

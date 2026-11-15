@@ -46,7 +46,7 @@ class VideoRequestPreparationServiceTest {
                         VideoAssetRole.SUBJECT, VideoAssetRole.SUBJECT, VideoAssetRole.SUBJECT,
                         VideoAssetRole.SUBJECT, VideoAssetRole.SUBJECT);
         @SuppressWarnings("unchecked")
-        List<String> references = (List<String>) prepared.providerPayload().get("image_urls");
+        List<String> references = (List<String>) prepared.providerPayload().get("image_references");
         assertThat(references).hasSize(9);
         assertThat(references.get(0)).isEqualTo("https://cdn.example.com/reference-0.png");
     }
@@ -70,8 +70,8 @@ class VideoRequestPreparationServiceTest {
         PreparedVideoRequest prepared = service.prepare(request(assets), user);
 
         assertThat(prepared.providerPayload())
-                .containsEntry("video_urls", List.of("https://cdn.example.com/previous.mp4"))
-                .doesNotContainKey("reference_video_urls");
+                .containsEntry("reference_video_urls", List.of("https://cdn.example.com/previous.mp4"))
+                .doesNotContainKey("video_urls");
     }
 
     @Test
@@ -91,13 +91,13 @@ class VideoRequestPreparationServiceTest {
         PreparedVideoRequest prepared = service.prepare(request(assets), user);
 
         @SuppressWarnings("unchecked")
-        List<String> references = (List<String>) prepared.providerPayload().get("image_urls");
+        List<String> references = (List<String>) prepared.providerPayload().get("image_references");
         assertThat(references).containsExactly(publicUrl);
     }
 
     private VideoGenerationRequest request(List<VideoAssetInput> assets) {
         return new VideoGenerationRequest(
-                "Create a group scene", "69cf3df6f9e33413dbd1db17", 5,
+                "Create a group scene", "ty-me-sd20-933", 5,
                 "16:9", "720p", "message-1", assets);
     }
 

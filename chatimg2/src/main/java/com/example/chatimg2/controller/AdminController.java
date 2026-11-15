@@ -20,6 +20,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.format.DateTimeFormatter;
@@ -84,6 +85,7 @@ public class AdminController {
         }
     }
 
+    @Transactional
     @PostMapping("/users/{id}/reset-password")
     public ApiResponse<ResetPasswordResponse> resetPassword(@PathVariable Integer id, HttpServletRequest request) {
         authService.requireAdmin(request);
@@ -92,6 +94,7 @@ public class AdminController {
         String tempPassword = generateTempPassword();
         user.setPasswordHash(passwordService.encode(tempPassword));
         userRepository.save(user);
+        authService.revokeUserSessions(user.getId());
         return ApiResponse.success("密码已重置", new ResetPasswordResponse(
                 user.getId(),
                 user.getEmail(),

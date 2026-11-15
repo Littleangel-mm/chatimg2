@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 import api from '../api'
 
 const FALLBACK_MODEL = {
-  id: '69cf3df6f9e33413dbd1db17',
-  name: '官渠-刷梦2.0-fast-多参-不卡脸',
+  id: 'ty-me-sd20-933',
+  name: '官渠-Seedance 2.0 933 稳定满血版',
   category: 'video',
   flowTypes: [],
   inputKeys: [],
@@ -12,6 +12,8 @@ const FALLBACK_MODEL = {
 }
 
 const SUPPORTED_MODEL_ID = FALLBACK_MODEL.id
+const SUBMIT_ATTEMPTS = 3
+const SUBMIT_RETRY_DELAY_MS = 800
 
 function preferredModels(data) {
   if (!Array.isArray(data)) return []
@@ -51,7 +53,11 @@ export const useVideosStore = defineStore('videos', () => {
   const submitting = ref(false)
   const uploading = ref(false)
   const initialized = ref(false)
-  const processingTasks = computed(() => tasks.value.filter(task => task.status === 'processing'))
+  const processingTasks = computed(() => tasks.value.filter(task =>
+    task.status === 'processing' && task.detailStatus !== 'submission_unknown'
+  ))
+  const pendingSubmissions = new Map()
+  let refreshPromise = null
 
   function mergeTask(task) {
     if (!task?.taskCode) return task
@@ -102,16 +108,63 @@ export const useVideosStore = defineStore('videos', () => {
     }
   }
 
-  async function submit(payload) {
-    submitting.value = true
+  function retryableSubmit(error) {
+    if (error?.recoverable === false) return false
+    const status = Number(error?.response?.status)
+    return !error?.response || status === 408 || status === 429 || status >= 500
+  }
+
+  function delay(ms) {
+    return new Promise(resolve => window.setTimeout(resolve, ms))
+  }
+
+  async function reconcileSubmission(clientMessageId) {
+    if (!clientMessageId) return null
     try {
-      const task = unwrap(await api.post('/video/generations', payload))
-      return mergeTask(task)
-    } catch (error) {
-      throw requestError(error, '视频任务提交失败，请稍后重试')
-    } finally {
-      submitting.value = false
+      const history = unwrap(await api.get('/video/generations'))
+      if (!Array.isArray(history)) return null
+      history.forEach(mergeTask)
+      return history.find(task => task.clientMessageId === clientMessageId) || null
+    } catch {
+      return null
     }
+  }
+
+  async function submitWithRetry(payload) {
+    let lastError
+    for (let attempt = 1; attempt <= SUBMIT_ATTEMPTS; attempt += 1) {
+      try {
+        const task = unwrap(await api.post('/video/generations', payload, {
+          headers: payload.clientMessageId ? { 'X-Request-ID': payload.clientMessageId } : undefined
+        }))
+        return mergeTask(task)
+      } catch (error) {
+        lastError = error
+        if (!retryableSubmit(error)) break
+        const recovered = await reconcileSubmission(payload.clientMessageId)
+        if (recovered) return recovered
+        if (attempt < SUBMIT_ATTEMPTS) {
+          await delay(SUBMIT_RETRY_DELAY_MS * attempt)
+        }
+      }
+    }
+    const recovered = await reconcileSubmission(payload.clientMessageId)
+    if (recovered) return recovered
+    const error = requestError(lastError, '提交请求未被后端确认，请检查网络后重试')
+    error.recoverable = false
+    throw error
+  }
+
+  function submit(payload) {
+    const key = payload.clientMessageId || ''
+    if (key && pendingSubmissions.has(key)) return pendingSubmissions.get(key)
+    submitting.value = true
+    const request = submitWithRetry(payload).finally(() => {
+      if (key) pendingSubmissions.delete(key)
+      submitting.value = pendingSubmissions.size > 0
+    })
+    if (key) pendingSubmissions.set(key, request)
+    return request
   }
 
   async function refreshTask(taskCode) {
@@ -123,9 +176,13 @@ export const useVideosStore = defineStore('videos', () => {
   }
 
   async function refreshProcessing() {
+    if (refreshPromise) return refreshPromise
     const codes = processingTasks.value.map(task => task.taskCode)
     if (!codes.length) return []
-    return Promise.allSettled(codes.map(refreshTask))
+    refreshPromise = Promise.allSettled(codes.map(refreshTask)).finally(() => {
+      refreshPromise = null
+    })
+    return refreshPromise
   }
 
   return {

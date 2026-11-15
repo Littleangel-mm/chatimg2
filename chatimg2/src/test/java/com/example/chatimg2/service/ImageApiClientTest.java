@@ -82,6 +82,56 @@ class ImageApiClientTest {
     }
 
     @Test
+    void singleImageListPreservesHistoricalMultipartContract() throws Exception {
+        AtomicReference<CapturedRequest> captured = new AtomicReference<>();
+        HttpServer server = startServer("/v1/images/edits", captured);
+        try {
+            ImageApiClient client = configuredClient(server);
+            ReflectionTestUtils.setField(client, "apiUrl",
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            client.imageEdit("edit", List.of(JPEG_IMAGE), "gpt-image-2");
+            String body = captured.get().body();
+            assertThat(body).contains("name=\"image\"; filename=\"source.jpg\"")
+                    .doesNotContain("name=\"image[]\"");
+            assertThat(body.indexOf("name=\"image\"")).isLessThan(body.indexOf("name=\"prompt\""));
+            assertThat(body.indexOf("name=\"prompt\"")).isLessThan(body.indexOf("name=\"model\""));
+            assertThat(body.indexOf("name=\"model\"")).isLessThan(body.indexOf("name=\"n\""));
+            assertThat(body.indexOf("name=\"n\"")).isLessThan(body.indexOf("name=\"size\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void plainText520KeepsUpstreamStatusAndDoesNotResubmit() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/images/edits", exchange -> {
+            requests.incrementAndGet();
+            exchange.getRequestBody().readAllBytes();
+            byte[] response = "error code: 520".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/plain");
+            exchange.sendResponseHeaders(520, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ImageApiClient client = configuredClient(server);
+            ReflectionTestUtils.setField(client, "submitMaxAttempts", 3);
+            assertThatThrownBy(() -> client.imageEdit("edit", List.of(JPEG_IMAGE), "gpt-image-2"))
+                    .isInstanceOfSatisfying(com.example.chatimg2.exception.ApiCallException.class, error -> {
+                        assertThat(error.getHttpStatus()).isEqualTo(520);
+                        assertThat(error.isRetryable()).isFalse();
+                        assertThat(error.getApiErrorCode()).isEqualTo("bad_response_body");
+                    });
+            assertThat(requests.get()).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void imageEditUsesDetectedJpegMediaType() throws Exception {
         AtomicReference<CapturedRequest> captured = new AtomicReference<>();
         HttpServer server = startServer("/v1/images/edits", captured);

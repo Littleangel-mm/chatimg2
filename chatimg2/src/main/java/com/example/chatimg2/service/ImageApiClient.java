@@ -182,11 +182,7 @@ public class ImageApiClient {
             throw new BusinessException("INVALID_SOURCE_IMAGE", "图生图支持 1 至 4 张参考图片");
         }
         MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("prompt", prompt)
-                .addFormDataPart("model", model)
-                .addFormDataPart("n", "1")
-                .addFormDataPart("size", size);
+                .setType(MultipartBody.FORM);
         for (int index = 0; index < imageBytes.size(); index++) {
             byte[] bytes = imageBytes.get(index);
             String mediaType = ImageContentSupport.detectMediaType(bytes);
@@ -196,7 +192,13 @@ public class ImageApiClient {
                     filename + ImageContentSupport.extension(mediaType),
                     RequestBody.create(bytes, MediaType.parse(mediaType)));
         }
-        MultipartBody body = bodyBuilder.build();
+        // Preserve the historical single-image multipart order for provider compatibility.
+        MultipartBody body = bodyBuilder
+                .addFormDataPart("prompt", prompt)
+                .addFormDataPart("model", model)
+                .addFormDataPart("n", "1")
+                .addFormDataPart("size", size)
+                .build();
 
         Request request = new Request.Builder()
                 .url(getApiBaseUrl() + "/v1/images/edits")
@@ -204,7 +206,10 @@ public class ImageApiClient {
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, imageCount={}, size={}", model, imageBytes.size(), size);
+        log.info("Img2img using model: {}, imageCount={}, size={}, host={}, path={}, imageField={}, imageBytes={}",
+                model, imageBytes.size(), size, request.url().host(), request.url().encodedPath(),
+                imageBytes.size() == 1 ? "image" : multiImageField,
+                imageBytes.stream().mapToLong(bytes -> bytes.length).sum());
         return resolveImageFromSubmit(request);
     }
 
@@ -267,6 +272,7 @@ public class ImageApiClient {
         int attempts = Math.max(1, submitMaxAttempts);
         ApiCallException lastError = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            long startedAt = System.nanoTime();
             try (Response response = submitClient.newCall(request).execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
                 if (!response.isSuccessful()) {
@@ -279,8 +285,10 @@ public class ImageApiClient {
                         sleepBeforeSubmitRetry();
                         continue;
                     }
-                    log.error("Image API rejected request: status={}, type={}, code={}, retryable={}",
-                            response.code(), error.getApiErrorType(), error.getApiErrorCode(), error.isRetryable());
+                    log.error("Image API rejected request: status={}, type={}, code={}, retryable={}, host={}, path={}, elapsedMs={}",
+                            response.code(), error.getApiErrorType(), error.getApiErrorCode(), error.isRetryable(),
+                            request.url().host(), request.url().encodedPath(),
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
                     throw error;
                 }
                 log.debug("Image API submit succeeded: status={}, responseBytes={}",
