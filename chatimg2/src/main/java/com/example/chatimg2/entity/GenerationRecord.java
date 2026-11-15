@@ -1,5 +1,7 @@
 package com.example.chatimg2.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
@@ -13,8 +15,14 @@ public class GenerationRecord {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "key_id", nullable = false)
+    @Column(name = "key_id")
     private Integer keyId;
+
+    @Column(name = "user_id")
+    private Integer userId;
+
+    @Column(name = "user_email", length = 120)
+    private String userEmail;
 
     @Column(name = "task_code", nullable = false, unique = true, length = 32)
     private String taskCode;
@@ -26,6 +34,16 @@ public class GenerationRecord {
     @Column(name = "image_url", length = 500)
     private String imagePath;
 
+    /** API 返回的远程结果地址，仅供后端补偿下载，不对前端暴露临时签名地址。 */
+    @JsonIgnore
+    @Column(name = "remote_image_url", columnDefinition = "TEXT")
+    private String remoteImageUrl;
+
+    @JsonProperty("remoteImageAvailable")
+    public boolean isRemoteImageAvailable() {
+        return remoteImageUrl != null && !remoteImageUrl.isBlank();
+    }
+
     @Column(name = "local_path", length = 500)
     private String localPath;
 
@@ -34,6 +52,9 @@ public class GenerationRecord {
 
     @Column(name = "source_image_path", length = 500)
     private String sourceImagePath;
+
+    @Column(name = "client_message_id", length = 120)
+    private String clientMessageId;
 
     @Column(name = "credits_cost", nullable = false)
     private Integer creditsCost = 20;

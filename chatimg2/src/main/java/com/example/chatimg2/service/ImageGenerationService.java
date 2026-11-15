@@ -3,6 +3,9 @@ package com.example.chatimg2.service;
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.entity.UserAccount;
+import com.example.chatimg2.exception.BusinessException;
+import com.example.chatimg2.exception.ImageDownloadException;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,7 +15,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -22,75 +24,294 @@ public class ImageGenerationService {
     private final GenerationRecordRepository recordRepository;
     private final GenerationRecordService recordService;
     private final AsyncGenerationExecutor asyncGenerationExecutor;
+    private final ImageResultDeliveryService imageResultDeliveryService;
     private final ImageStorageConfig storageConfig;
+    private final AuthService authService;
 
     private static final int CREDITS_PER_GENERATION = 20;
+    private static final int MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 
     public GenerationRecord submitGeneration(String keyCode, String prompt, String type,
-                                             String sourceImageBase64, String model) {
+                                             String sourceImageBase64, String model, String clientMessageId) {
         ActivationKey key = keyService.activate(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥无效或已禁用"));
+                .orElseThrow(() -> new BusinessException("KEY_INVALID", "密钥无效或已禁用"));
 
         if (key.getRemainingCredits() < CREDITS_PER_GENERATION) {
-            throw new RuntimeException("积分不足，剩余 " + key.getRemainingCredits());
+            throw new BusinessException("INSUFFICIENT_CREDITS", "积分不足，剩余 " + key.getRemainingCredits());
         }
 
-        String generationType = "img2img".equals(type) ? "img2img" : "text2img";
-        if ("img2img".equals(generationType) && (sourceImageBase64 == null || sourceImageBase64.isBlank())) {
-            throw new RuntimeException("图生图需要上传参考图片");
+        GenerationRecord existing = findExistingClientRecord(key.getId(), null, clientMessageId);
+        if (existing != null) {
+            return normalizeCompletedRecord(existing);
         }
 
-        String sourceImagePath = null;
-        if ("img2img".equals(generationType)) {
-            byte[] img2imgBytes = decodeBase64Image(sourceImageBase64);
-            sourceImagePath = saveSourceImage(img2imgBytes);
-        }
+        String generationType = resolveGenerationType(type);
+        String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, null);
 
-        Integer keyId = key.getId();
-        GenerationRecord record = recordService.createPendingRecord(
-                keyId, prompt, generationType, sourceImagePath);
-
+        GenerationRecord record = recordService.createPendingRecord(key.getId(), prompt, generationType, sourceImagePath, clientMessageId);
         asyncGenerationExecutor.runGeneration(
-                record.getId(), record.getTaskCode(), keyId, prompt, generationType, sourceImagePath, model);
+                record.getId(), record.getTaskCode(), key.getId(), null, prompt, generationType, sourceImagePath, model, null);
+        return record;
+    }
 
+    public GenerationRecord submitGenerationForUser(UserAccount user, String prompt, String type,
+                                                    String sourceImageBase64, String model, String clientMessageId) {
+        if (user.getRemainingCredits() < CREDITS_PER_GENERATION) {
+            throw new BusinessException("INSUFFICIENT_CREDITS", "积分不足，剩余 " + user.getRemainingCredits());
+        }
+
+        GenerationRecord existing = findExistingClientRecord(null, user.getId(), clientMessageId);
+        if (existing != null) {
+            return normalizeCompletedRecord(existing);
+        }
+
+        String ownerFolder = authService.safeEmailFolder(user.getEmail());
+        String generationType = resolveGenerationType(type);
+        String sourceImagePath = saveSourceIfNeeded(generationType, sourceImageBase64, ownerFolder);
+
+        GenerationRecord record = recordService.createPendingRecordForUser(user, prompt, generationType, sourceImagePath, clientMessageId);
+        asyncGenerationExecutor.runGeneration(
+                record.getId(), record.getTaskCode(), null, user.getId(), prompt, generationType, sourceImagePath, model, ownerFolder);
         return record;
     }
 
     public GenerationRecord getRecordStatus(String keyCode, Integer recordId) {
         ActivationKey key = keyService.getByKeyCode(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+                .orElseThrow(() -> new BusinessException("KEY_NOT_FOUND", "密钥不存在"));
         GenerationRecord record = recordRepository.findById(recordId)
-                .orElseThrow(() -> new RuntimeException("记录不存在"));
-        if (!record.getKeyId().equals(key.getId())) {
-            throw new RuntimeException("无权查看此记录");
+                .orElseThrow(() -> new BusinessException("RECORD_NOT_FOUND", "记录不存在"));
+        if (record.getKeyId() == null || !record.getKeyId().equals(key.getId())) {
+            throw new BusinessException("RECORD_FORBIDDEN", "无权查看此记录");
         }
-        return record;
+        return normalizeCompletedRecord(record);
+    }
+
+    public GenerationRecord getRecordStatusForUser(UserAccount user, Integer recordId) {
+        GenerationRecord record = recordRepository.findById(recordId)
+                .orElseThrow(() -> new BusinessException("RECORD_NOT_FOUND", "记录不存在"));
+        if (!user.getId().equals(record.getUserId())) {
+            throw new BusinessException("RECORD_FORBIDDEN", "无权查看此记录");
+        }
+        return normalizeCompletedRecord(record);
+    }
+
+    public void retryRemoteImageBackup(String keyCode, Integer recordId) {
+        GenerationRecord record = getRecordStatus(keyCode, recordId);
+        if (record.isRemoteImageAvailable()) {
+            imageResultDeliveryService.retrySavedRemoteImage(recordId);
+        }
+    }
+
+    public void retryRemoteImageBackupForUser(UserAccount user, Integer recordId) {
+        GenerationRecord record = getRecordStatusForUser(user, recordId);
+        if (record.isRemoteImageAvailable()) {
+            imageResultDeliveryService.retrySavedRemoteImage(recordId);
+        }
+    }
+
+    public void saveBrowserImageBackup(String keyCode, Integer recordId, byte[] imageBytes) {
+        getRecordStatus(keyCode, recordId);
+        imageResultDeliveryService.saveBrowserDeliveredImage(recordId, imageBytes);
+    }
+
+    public void saveBrowserImageBackupForUser(UserAccount user, Integer recordId, byte[] imageBytes) {
+        getRecordStatusForUser(user, recordId);
+        imageResultDeliveryService.saveBrowserDeliveredImage(recordId, imageBytes);
     }
 
     public List<GenerationRecord> getHistory(String keyCode) {
         ActivationKey key = keyService.getByKeyCode(keyCode)
-                .orElseThrow(() -> new RuntimeException("密钥不存在"));
+                .orElseThrow(() -> new BusinessException("KEY_NOT_FOUND", "密钥不存在"));
         return recordRepository.findTop30ByKeyIdOrderByCreatedAtDesc(key.getId()).stream()
+                .map(this::normalizeCompletedRecord)
                 .filter(r -> !"failed".equals(r.getStatus()))
                 .toList();
     }
 
-    private byte[] decodeBase64Image(String base64) {
-        String data = base64;
-        if (base64.contains(",")) {
-            data = base64.substring(base64.indexOf(",") + 1);
-        }
-        return Base64.getDecoder().decode(data);
+    public List<GenerationRecord> getHistoryForUser(UserAccount user) {
+        return recordRepository.findTop30ByUserIdOrderByCreatedAtDesc(user.getId()).stream()
+                .map(this::normalizeCompletedRecord)
+                .filter(r -> !"failed".equals(r.getStatus()))
+                .toList();
     }
 
-    private String saveSourceImage(byte[] imageBytes) {
-        try {
-            String fileName = "src_" + UUID.randomUUID() + ".png";
-            Path filePath = storageConfig.getSourcesDir().resolve(fileName);
-            Files.write(filePath, imageBytes);
-            return filePath.toString();
-        } catch (IOException e) {
-            throw new RuntimeException("保存参考图失败", e);
+    public List<GenerationRecord> getAdminHistory() {
+        return recordRepository.findTop100ByOrderByCreatedAtDesc().stream()
+                .map(this::normalizeCompletedRecord)
+                .toList();
+    }
+
+    private GenerationRecord normalizeCompletedRecord(GenerationRecord record) {
+        boolean changed = repairUserImagePath(record);
+        if (record.getImagePath() != null && !record.getImagePath().isBlank()
+                && (!"completed".equals(record.getStatus()) || record.getErrorMessage() != null)) {
+            record.setStatus("completed");
+            record.setErrorMessage(null);
+            changed = true;
         }
+        return changed ? recordRepository.save(record) : record;
+    }
+
+    private boolean repairUserImagePath(GenerationRecord record) {
+        if (record == null
+                || record.getUserEmail() == null
+                || record.getUserEmail().isBlank()
+                || record.getImagePath() == null
+                || record.getImagePath().isBlank()
+                || record.getImagePath().contains("/")
+                || record.getImagePath().contains("\\")) {
+            return false;
+        }
+
+        String ownerFolder = authService.safeEmailFolder(record.getUserEmail());
+        Path ownerImage = storageConfig.getBackupDir().resolve(ownerFolder).resolve(record.getImagePath()).normalize();
+        if (!Files.exists(ownerImage)) {
+            return false;
+        }
+        record.setImagePath(ownerFolder + "/" + record.getImagePath());
+        return true;
+    }
+
+    private String resolveGenerationType(String type) {
+        return "img2img".equals(type) ? "img2img" : "text2img";
+    }
+
+    private GenerationRecord findExistingClientRecord(Integer keyId, Integer userId, String clientMessageId) {
+        if (clientMessageId == null || clientMessageId.isBlank()) {
+            return null;
+        }
+        String normalized = clientMessageId.trim();
+        if (userId != null) {
+            return recordRepository.findFirstByUserIdAndClientMessageIdOrderByCreatedAtDesc(userId, normalized)
+                    .orElse(null);
+        }
+        if (keyId != null) {
+            return recordRepository.findFirstByKeyIdAndClientMessageIdOrderByCreatedAtDesc(keyId, normalized)
+                    .orElse(null);
+        }
+        return null;
+    }
+
+    private String saveSourceIfNeeded(String generationType, String sourceImageBase64, String ownerFolder) {
+        if (!"img2img".equals(generationType)) {
+            return null;
+        }
+        if (sourceImageBase64 == null || sourceImageBase64.isBlank()) {
+            throw new BusinessException("SOURCE_IMAGE_REQUIRED", "图生图需要上传参考图片");
+        }
+        return saveSourceImage(decodeBase64Image(sourceImageBase64), ownerFolder);
+    }
+
+    private DecodedImage decodeBase64Image(String base64) {
+        String data = base64;
+        String mediaType = "image/png";
+        if (base64.contains(",")) {
+            String header = base64.substring(0, base64.indexOf(","));
+            mediaType = parseImageMediaType(header);
+            data = base64.substring(base64.indexOf(",") + 1);
+        }
+        try {
+            byte[] bytes = Base64.getDecoder().decode(data);
+            if (bytes.length == 0) {
+                throw new BusinessException("SOURCE_IMAGE_EMPTY", "参考图片内容为空");
+            }
+            if (bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+                throw new BusinessException("SOURCE_IMAGE_TOO_LARGE", "参考图片不能超过 20MB");
+            }
+            return new DecodedImage(bytes, mediaType, extensionForMediaType(mediaType));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("SOURCE_IMAGE_INVALID", "参考图片格式无效", e);
+        }
+    }
+
+    private String saveSourceImage(DecodedImage image, String ownerFolder) {
+        try {
+            String fileName = "src_" + java.util.UUID.randomUUID() + "." + image.extension();
+            Path dir = ownerFolder == null || ownerFolder.isBlank()
+                    ? storageConfig.getSourcesDir()
+                    : storageConfig.getSourcesDir().resolve(ownerFolder);
+            Files.createDirectories(dir);
+            Path filePath = dir.resolve(fileName);
+            Files.write(filePath, image.bytes());
+            return ownerFolder == null || ownerFolder.isBlank()
+                    ? filePath.toString()
+                    : "sources/" + ownerFolder + "/" + fileName;
+        } catch (IOException e) {
+            throw new ImageDownloadException("保存参考图失败", e);
+        }
+    }
+
+    private String parseImageMediaType(String dataUrlHeader) {
+        String header = dataUrlHeader == null ? "" : dataUrlHeader.toLowerCase();
+        if (header.contains("image/jpeg") || header.contains("image/jpg")) {
+            return "image/jpeg";
+        }
+        if (header.contains("image/webp")) {
+            return "image/webp";
+        }
+        if (header.contains("image/png")) {
+            return "image/png";
+        }
+        return "image/png";
+    }
+
+    private String extensionForMediaType(String mediaType) {
+        return switch (mediaType) {
+            case "image/jpeg" -> "jpg";
+            case "image/webp" -> "webp";
+            default -> "png";
+        };
+    }
+
+    private String detectImageMediaType(Path path, byte[] bytes) {
+        String byMagic = detectImageMediaType(bytes);
+        if (byMagic != null) {
+            return byMagic;
+        }
+        try {
+            String probed = Files.probeContentType(path);
+            if (probed != null && probed.startsWith("image/")) {
+                return probed;
+            }
+        } catch (IOException ignored) {
+        }
+        return "image/png";
+    }
+
+    private String detectImageMediaType(byte[] bytes) {
+        if (bytes == null || bytes.length < 12) {
+            return null;
+        }
+        if ((bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8) {
+            return "image/jpeg";
+        }
+        if ((bytes[0] & 0xff) == 0x89
+                && bytes[1] == 0x50
+                && bytes[2] == 0x4e
+                && bytes[3] == 0x47) {
+            return "image/png";
+        }
+        if (bytes[0] == 'R'
+                && bytes[1] == 'I'
+                && bytes[2] == 'F'
+                && bytes[3] == 'F'
+                && bytes[8] == 'W'
+                && bytes[9] == 'E'
+                && bytes[10] == 'B'
+                && bytes[11] == 'P') {
+            return "image/webp";
+        }
+        return null;
+    }
+
+    private Path resolveSourcePath(String sourceImagePath) {
+        Path path = Path.of(sourceImagePath);
+        if (path.isAbsolute()) {
+            return path;
+        }
+        return storageConfig.getBackupDir().resolve(sourceImagePath).normalize();
+    }
+
+    private record DecodedImage(byte[] bytes, String mediaType, String extension) {
     }
 }

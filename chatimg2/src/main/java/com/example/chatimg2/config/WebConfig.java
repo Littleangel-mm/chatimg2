@@ -13,11 +13,11 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        String location = storageConfig.getBackupDir().toUri().toString();
-        if (!location.endsWith("/")) {
-            location += "/";
-        }
+        registry.addResourceHandler("/img/upimg/**")
+                .addResourceLocations(storageConfig.upimgResourceLocation());
+        registry.addResourceHandler("/img/upvideo/**")
+                .addResourceLocations(storageConfig.upvideoResourceLocation());
         registry.addResourceHandler("/img/**")
-                .addResourceLocations(location);
+                .addResourceLocations(storageConfig.imageResourceLocations().toArray(String[]::new));
     }
 }

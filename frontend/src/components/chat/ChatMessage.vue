@@ -1,16 +1,64 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
+import { normalizeImageUrl, requestImageBackup } from '../../api'
+import ImageLightbox from '../ImageLightbox.vue'
 
 const props = defineProps({
   message: { type: Object, required: true }
 })
 
 const convStore = useConversationsStore()
+const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
+const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
 
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
-const isProcessing = computed(() => props.message.status === 'processing')
-const isFailed = computed(() => props.message.status === 'failed')
+const sourceImageUrl = computed(() => normalizeImageUrl(props.message.sourceImage))
+const messageStatus = computed(() => {
+  if (props.message.record?.imagePath || props.message.record?.imageUrl || props.message.record?.remoteImageAvailable) {
+    return 'completed'
+  }
+  return (props.message.record?.status || props.message.status || '').toLowerCase()
+})
+const isProcessing = computed(() => {
+  const status = messageStatus.value
+  if (status === 'completed' || status === 'failed') return false
+  return status === 'processing' || !status
+})
+const isFailed = computed(() => {
+  return messageStatus.value === 'failed'
+})
+const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorMessage || ''))
+const isPolicyAdvice = computed(() => !!policyAdviceText.value)
+const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
+const previewImage = ref('')
+const backupRequested = ref(false)
+
+function openPreview(url) {
+  if (url) previewImage.value = url
+}
+
+function requestLocalBackup() {
+  const record = props.message.record
+  if (!record?.remoteImageAvailable || !record.id || backupRequested.value) return
+  backupRequested.value = true
+  requestImageBackup(record).catch(() => {
+    backupRequested.value = false
+  })
+}
+
+function extractPolicyAdvice(text) {
+  if (!text) return ''
+  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
+  }
+  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
+  if (legacyIndex >= 0) {
+    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -21,10 +69,11 @@ const isFailed = computed(() => props.message.status === 'failed')
     <div class="bubble">
       <template v-if="message.role === 'user'">
         <img
-          v-if="message.sourceImage"
-          :src="message.sourceImage"
+          v-if="sourceImageUrl"
+          :src="sourceImageUrl"
           alt="参考图"
           class="source-thumb"
+          @click="openPreview(sourceImageUrl)"
         />
         <p class="text">{{ message.content }}</p>
       </template>
@@ -32,14 +81,23 @@ const isFailed = computed(() => props.message.status === 'failed')
       <template v-else>
         <div v-if="isProcessing" class="assistant-loading">
           <span class="spin">⟳</span>
-          <span>正在生成图片…</span>
+          <span>我知道你很急，但是你先别急</span>
+        </div>
+        <div v-else-if="isFailed && isPolicyAdvice" class="assistant-advice">
+          <p>{{ displayError }}</p>
         </div>
         <div v-else-if="isFailed" class="assistant-error">
           <span>生成失败</span>
-          <p v-if="message.errorMessage">{{ message.errorMessage }}</p>
+          <p v-if="displayError">{{ displayError }}</p>
         </div>
         <div v-else-if="imageUrl" class="assistant-image">
-          <img :src="imageUrl" :alt="message.record?.prompt || '生成结果'" loading="lazy" />
+          <img
+            :src="imageUrl"
+            :alt="message.record?.prompt || '生成结果'"
+            loading="lazy"
+            @load="requestLocalBackup"
+            @click="openPreview(imageUrl)"
+          />
           <p v-if="message.record?.taskCode" class="task-code">{{ message.record.taskCode }}</p>
         </div>
         <div v-else class="assistant-loading">
@@ -47,6 +105,11 @@ const isFailed = computed(() => props.message.status === 'failed')
         </div>
       </template>
     </div>
+    <ImageLightbox
+      :src="previewImage"
+      :alt="message.record?.prompt || '图片预览'"
+      @close="previewImage = ''"
+    />
   </div>
 </template>
 
@@ -65,27 +128,27 @@ const isFailed = computed(() => props.message.status === 'failed')
 }
 
 .avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-blush);
   color: var(--text-muted);
 }
 
 .message.user .avatar {
-  background: rgba(124, 92, 255, 0.2);
-  color: #b49cff;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 
 .message.assistant .avatar {
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
+  background: var(--gold-soft);
+  color: var(--gold);
 }
 
 .bubble {
@@ -107,11 +170,12 @@ const isFailed = computed(() => props.message.status === 'failed')
 }
 
 .message.user .text {
-  background: rgba(124, 92, 255, 0.12);
-  border: 1px solid rgba(124, 92, 255, 0.2);
+  background: var(--gradient);
+  color: #fff;
   padding: 12px 16px;
-  border-radius: 16px 16px 4px 16px;
+  border-radius: 18px 18px 4px 18px;
   max-width: 85%;
+  box-shadow: 0 6px 16px rgba(224, 155, 176, 0.32);
 }
 
 .source-thumb {
@@ -121,6 +185,7 @@ const isFailed = computed(() => props.message.status === 'failed')
   margin-bottom: 8px;
   object-fit: cover;
   border: 1px solid var(--border);
+  cursor: zoom-in;
 }
 
 .assistant-loading {
@@ -145,10 +210,10 @@ const isFailed = computed(() => props.message.status === 'failed')
 
 .assistant-error {
   padding: 12px 16px;
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.25);
+  background: rgba(210, 115, 138, 0.1);
+  border: 1px solid rgba(210, 115, 138, 0.28);
   border-radius: 12px;
-  color: #f87171;
+  color: var(--danger);
   font-size: 14px;
 }
 
@@ -158,12 +223,26 @@ const isFailed = computed(() => props.message.status === 'failed')
   opacity: 0.85;
 }
 
+.assistant-advice {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 8px 0;
+}
+
+.assistant-advice p {
+  margin: 0;
+}
+
 .assistant-image img {
   max-width: 100%;
   max-height: 480px;
   border-radius: 12px;
   border: 1px solid var(--border);
   display: block;
+  cursor: zoom-in;
 }
 
 .task-code {

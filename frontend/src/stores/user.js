@@ -1,11 +1,62 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api from '../api'
+import api, { generateApi } from '../api'
 import { useConversationsStore } from './conversations'
+import { useAuthStore } from './auth'
 
 const CACHE_KEY = 'userCache'
 const POLL_INTERVAL_MS = 4000
-const POLL_MAX_ATTEMPTS = 180
+const POLL_MAX_ATTEMPTS = 900
+const RECOVERY_INTERVAL_MS = 5000
+const RECOVERY_MAX_ATTEMPTS = 36
+const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
+const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
+const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
+const activePolls = new Set()
+
+function normalizeStatus(status) {
+  return (status || '').toLowerCase()
+}
+
+function resolveRecordStatus(record) {
+  const status = normalizeStatus(record?.status)
+  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
+  if (status === 'completed') return 'processing'
+  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
+  if (status === 'failed') return status
+  return status || 'processing'
+}
+
+function isRecoveryInterruptedRecord(record) {
+  const message = record?.errorMessage || ''
+  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
+}
+
+function friendlyGenerationError(message, record = null) {
+  const text = message || ''
+  const policyAdvice = extractPolicyAdvice(text)
+  if (policyAdvice) {
+    return `${POLICY_ADVICE_PREFIX}${policyAdvice}`
+  }
+  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
+  if (record?.generationType === 'img2img' || rawApiError) {
+    return '生成失败，请更换图片重试'
+  }
+  return text || '生成失败'
+}
+
+function extractPolicyAdvice(text) {
+  if (!text) return ''
+  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
+  }
+  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
+  if (legacyIndex >= 0) {
+    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
+  }
+  return ''
+}
 
 function readCache() {
   try {
@@ -21,6 +72,12 @@ function writeCache(data) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isTransientPollError(error) {
+  const status = error?.response?.status
+  if (!status) return true
+  return status === 408 || status === 429 || status >= 500
 }
 
 function isInvalidKeyError(e) {
@@ -42,10 +99,17 @@ export const useUserStore = defineStore('user', () => {
   const syncingCredits = ref(false)
 
   const remainingCredits = computed(() => {
+    const authStore = useAuthStore()
+    if (authStore.isUser && authStore.user?.remainingCredits != null) {
+      return authStore.user.remainingCredits
+    }
     const remaining = totalCredits.value - usedCredits.value
     return Number.isFinite(remaining) ? Math.max(0, remaining) : 0
   })
-  const isActivated = computed(() => !!keyCode.value)
+  const isActivated = computed(() => {
+    const authStore = useAuthStore()
+    return !!keyCode.value || authStore.isUser
+  })
   const isBusy = computed(() => activating.value || generating.value)
 
   function persist() {
@@ -111,22 +175,36 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function fetchHistory() {
-    if (!keyCode.value) return
-    const { data } = await api.get('/user/history', { params: { keyCode: keyCode.value } })
+    const authStore = useAuthStore()
+    if (!keyCode.value && !authStore.isUser) return
+    const params = keyCode.value ? { keyCode: keyCode.value } : undefined
+    const { data } = await api.get('/user/history', { params })
     if (data.code === 200) {
       history.value = data.data || []
       persist()
       try {
         const convStore = useConversationsStore()
-        convStore.bindKeyCode(keyCode.value)
-        convStore.importFromHistory(history.value, keyCode.value)
+        const ownerKey = authStore.user?.email || keyCode.value
+        convStore.bindKeyCode(ownerKey)
+        await convStore.loadRemote().catch(() => false)
+        convStore.importFromHistory(history.value, ownerKey)
+        convStore.syncFromHistoryRecords(history.value)
       } catch {
         /* ignore */
       }
+      resumePendingGenerations().catch(() => {})
     }
   }
 
   async function syncCreditsFromServer() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      if (keyCode.value) {
+        await activate(keyCode.value).catch(() => {})
+      }
+      await authStore.fetchMe().catch(() => {})
+      return true
+    }
     if (!keyCode.value) return false
     syncingCredits.value = true
     try {
@@ -145,6 +223,15 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function refreshSession() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      if (keyCode.value) {
+        await activate(keyCode.value)
+      }
+      await authStore.fetchMe()
+      await fetchHistory()
+      return
+    }
     if (!keyCode.value) return
     refreshing.value = true
     try {
@@ -162,63 +249,176 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function initSession() {
+    const authStore = useAuthStore()
+    if (authStore.isUser) {
+      syncCreditsFromServer()
+        .then(() => fetchHistory())
+        .catch(() => fetchHistory().catch(() => {}))
+      return
+    }
     if (!keyCode.value) return
     hydrateFromCache()
     try {
-      useConversationsStore().bindKeyCode(keyCode.value)
+      useConversationsStore().bindKeyCode(authStore.user?.email || keyCode.value)
     } catch {
       /* ignore */
     }
     syncCreditsFromServer()
       .then(ok => {
-        if (ok) fetchHistory().catch(() => {})
+        if (ok) {
+          fetchHistory()
+            .then(() => resumePendingGenerations())
+            .catch(() => {})
+        }
       })
       .catch(() => {})
   }
 
-  async function pollRecordStatus(recordId) {
-    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
-      await sleep(POLL_INTERVAL_MS)
-      const { data } = await api.get(`/user/generate/${recordId}`, {
-        params: { keyCode: keyCode.value }
-      })
-      if (data.code !== 200) throw new Error(data.message)
-
-      const record = data.data
-      upsertHistoryRecord(record)
-
-      if (record.status === 'completed') {
-        await syncCreditsFromServer()
-        return record
+  function collectPendingRecordIds() {
+    const ids = new Set()
+    try {
+      const convStore = useConversationsStore()
+      for (const conv of convStore.conversations) {
+        for (const msg of conv.messages) {
+          if (msg.role !== 'assistant') continue
+          const status = resolveRecordStatus(msg.record || { status: msg.status })
+          if (status !== 'processing') continue
+          const id = msg.recordId || msg.record?.id
+          if (id != null) ids.add(Number(id))
+        }
       }
-      if (record.status === 'failed') {
-        await syncCreditsFromServer()
-        throw new Error(record.errorMessage || '生成失败')
-      }
+    } catch {
+      /* store may not be ready */
     }
-    throw new Error('生图超时，请刷新页面查看历史')
+    return [...ids]
   }
 
-  async function generate({ prompt, type, sourceImage, model }) {
+  async function pollRecordStatus(recordId) {
+    const normalizedId = Number(recordId)
+    if (activePolls.has(normalizedId)) {
+      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+        await sleep(POLL_INTERVAL_MS)
+        const cached = history.value.find(item => Number(item.id) === normalizedId)
+        const status = resolveRecordStatus(cached)
+        if (status === 'completed') return cached
+        if (status === 'failed') throw new Error(cached?.errorMessage || '生成失败')
+      }
+      throw new Error('生图超时，请刷新页面查看历史')
+    }
+
+    activePolls.add(normalizedId)
+    try {
+      let lastTransientError = null
+      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+        await sleep(POLL_INTERVAL_MS)
+        let data
+        try {
+          const params = keyCode.value ? { keyCode: keyCode.value } : undefined
+          const response = await api.get(`/user/generate/${normalizedId}`, { params })
+          data = response.data
+          if (data.code !== 200) throw new Error(data.message)
+          lastTransientError = null
+        } catch (error) {
+          if (isTransientPollError(error)) {
+            lastTransientError = error
+            continue
+          }
+          throw error
+        }
+
+        const record = data.data
+        upsertHistoryRecord(record)
+
+        const status = resolveRecordStatus(record)
+        if (status === 'completed') {
+          await syncCreditsFromServer()
+          return record
+        }
+        if (status === 'failed') {
+          await syncCreditsFromServer()
+          try {
+            useConversationsStore().failAssistantForRecord(normalizedId, record.errorMessage || '生成失败')
+          } catch {
+            /* ignore */
+          }
+          throw new Error(record.errorMessage || '生成失败')
+        }
+      }
+      throw new Error('生图超时，请刷新页面查看历史')
+    } finally {
+      activePolls.delete(normalizedId)
+    }
+  }
+
+  async function resumePendingGenerations() {
+    const authStore = useAuthStore()
+    if (!keyCode.value && !authStore.isUser) return
+    const pendingIds = collectPendingRecordIds()
+    if (!pendingIds.length) return
+    await Promise.allSettled(
+      pendingIds.map(id =>
+        pollRecordStatus(id).catch(err => {
+          recoverRecordAfterPollError(id, err.message).catch(() => {})
+        })
+      )
+    )
+  }
+
+  async function recoverRecordAfterPollError(recordId, errorMessage) {
+    const normalizedId = Number(recordId)
+    for (let i = 0; i < RECOVERY_MAX_ATTEMPTS; i++) {
+      await sleep(RECOVERY_INTERVAL_MS)
+      await fetchHistory().catch(() => {})
+      const latest = history.value.find(item => Number(item.id) === normalizedId)
+      if (resolveRecordStatus(latest) === 'completed') {
+        try {
+          useConversationsStore().syncRecord(latest)
+          useConversationsStore().syncFromHistoryRecords(history.value)
+        } catch {
+          /* ignore */
+        }
+        return latest
+      }
+      if (resolveRecordStatus(latest) === 'processing') {
+        continue
+      }
+      if (resolveRecordStatus(latest) === 'failed') {
+        try {
+          useConversationsStore().failAssistantForRecord(recordId, latest.errorMessage || errorMessage)
+        } catch {
+          /* ignore */
+        }
+        return latest
+      }
+    }
+    return null
+  }
+
+  async function generate({ prompt, type, sourceImage, model, clientMessageId }) {
     generating.value = true
     try {
-      const { data } = await api.post('/user/generate', {
+      const { data } = await generateApi.post('/user/generate', {
         keyCode: keyCode.value,
         prompt,
         type,
         model,
-        sourceImage
+        sourceImage,
+        clientMessageId
       })
       if (data.code !== 200) throw new Error(data.message)
 
       upsertHistoryRecord(data.data)
+      applyLocalGenerationCharge(data.data)
+      generating.value = false
       await syncCreditsFromServer()
 
-      if (data.data.status === 'completed') {
-        return data.data
+      if (resolveRecordStatus(data.data) === 'processing') {
+        pollRecordStatus(data.data.id).catch(err => {
+          recoverRecordAfterPollError(data.data.id, err.message).catch(() => {})
+        })
       }
 
-      return await pollRecordStatus(data.data.id)
+      return data.data
     } catch (e) {
       await Promise.all([
         syncCreditsFromServer().catch(() => {}),
@@ -230,6 +430,27 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  function applyLocalGenerationCharge(record) {
+    const cost = Number(record?.creditsCost || 20)
+    if (!Number.isFinite(cost) || cost <= 0 || resolveRecordStatus(record) !== 'processing') {
+      return
+    }
+    const authStore = useAuthStore()
+    if (authStore.isUser && authStore.user) {
+      const used = Number(authStore.user.usedCredits || 0) + cost
+      const total = Number(authStore.user.totalCredits || 0)
+      authStore.user = {
+        ...authStore.user,
+        usedCredits: used,
+        remainingCredits: Math.max(0, total - used)
+      }
+      localStorage.setItem('authUser', JSON.stringify(authStore.user))
+      return
+    }
+    usedCredits.value += cost
+    persist()
+  }
+
   function logout() {
     keyCode.value = ''
     keyId.value = null
@@ -239,7 +460,7 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('keyCode')
     localStorage.removeItem(CACHE_KEY)
     try {
-      useConversationsStore().clearAll()
+      useConversationsStore().resetSession()
     } catch {
       /* ignore */
     }
@@ -250,6 +471,6 @@ export const useUserStore = defineStore('user', () => {
     activating, generating, refreshing, syncingCredits,
     remainingCredits, isActivated, isBusy,
     activate, fetchHistory, refreshSession, initSession,
-    syncCreditsFromServer, generate, logout, hydrateFromCache
+    syncCreditsFromServer, generate, resumePendingGenerations, logout, hydrateFromCache
   }
 })

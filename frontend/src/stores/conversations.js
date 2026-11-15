@@ -1,8 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import api from '../api'
 import { getImageUrl } from '../api'
 
 const STORAGE_PREFIX = 'conversations_'
+const STORAGE_VERSION = 2
+const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
+const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
+const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
 
 function storageKey(keyCode) {
   return `${STORAGE_PREFIX}${keyCode || 'guest'}`
@@ -20,6 +25,122 @@ function writeStored(keyCode, data) {
   localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
 }
 
+function hasAuthToken() {
+  return !!localStorage.getItem('authToken')
+}
+
+function recordIdEquals(a, b) {
+  return Number(a) === Number(b)
+}
+
+function resolveRecordStatus(record) {
+  const status = (record?.status || '').toLowerCase()
+  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
+  if (status === 'completed') return 'processing'
+  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
+  if (status === 'failed') return status
+  return status || 'processing'
+}
+
+function isRecoveryInterruptedRecord(record) {
+  const message = record?.errorMessage || ''
+  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
+}
+
+function recordForMessage(record, status, errorMessage) {
+  return {
+    ...record,
+    status,
+    errorMessage: status === 'completed' ? null : errorMessage
+  }
+}
+
+function messageStatusForSync(msg) {
+  if (msg?.role !== 'assistant') return null
+  return resolveRecordStatus(msg.record || { status: msg.status })
+}
+
+function messageErrorForSync(msg) {
+  const status = messageStatusForSync(msg)
+  if (status === 'completed') return null
+  return msg.errorMessage || msg.record?.errorMessage || null
+}
+
+function friendlyGenerationError(message, record = null) {
+  const text = message || ''
+  const policyAdvice = extractPolicyAdvice(text)
+  if (policyAdvice) {
+    return `${POLICY_ADVICE_PREFIX}${policyAdvice}`
+  }
+  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
+  if (record?.generationType === 'img2img' || rawApiError) {
+    return '生成失败，请更换图片重试'
+  }
+  return text || '生成失败'
+}
+
+function extractPolicyAdvice(text) {
+  if (!text) return ''
+  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
+  if (markerIndex >= 0) {
+    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
+  }
+  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
+  if (legacyIndex >= 0) {
+    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
+  }
+  return ''
+}
+
+function recordCreatedTime(record) {
+  const time = new Date(record?.createdAt || 0).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
+  const current = msg.record || {}
+  return !recordIdEquals(msg.recordId || current.id, record.id) ||
+    resolveRecordStatus(msg.record || { status: msg.status }) !== nextStatus ||
+    (current.imagePath || '') !== (record.imagePath || '') ||
+    !!current.remoteImageAvailable !== !!record.remoteImageAvailable ||
+    (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
+    (msg.errorMessage || '') !== (nextErrorMessage || '')
+}
+
+function recordMatchesConversation(record, conv, userMsg = null) {
+  const type = record?.generationType === 'img2img' ? 'img2img' : 'text2img'
+  const expectedType = userMsg?.sourceImage ? 'img2img' : (conv?.type || 'text2img')
+  return type === expectedType
+}
+
+function recordMatchesClientMessage(record, msg) {
+  return !!record?.clientMessageId && !!msg?.id && record.clientMessageId === msg.id
+}
+
+function isNearMessageTime(record, msg, userMsg) {
+  const recordTime = recordCreatedTime(record)
+  if (!recordTime) return false
+  const start = Number(userMsg?.createdAt || msg?.createdAt || 0)
+  if (!start) return false
+  return recordTime >= start - 60 * 1000 && recordTime <= start + 6 * 60 * 60 * 1000
+}
+
+function sourceImageLooksSame(record, userMsg) {
+  const current = userMsg?.sourceImage || ''
+  const source = record?.sourceImagePath || ''
+  if (!current || current.startsWith('data:') || !source) return true
+  return current === source
+}
+
+function canRecoverRecordForMessage(record, conv, msg, userMsg) {
+  if (recordMatchesClientMessage(record, msg)) return true
+  if (msg?.recordId || msg?.record?.id || record?.clientMessageId) return false
+  return record?.prompt === userMsg?.content &&
+    recordMatchesConversation(record, conv, userMsg) &&
+    sourceImageLooksSame(record, userMsg) &&
+    isNearMessageTime(record, msg, userMsg)
+}
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -35,6 +156,13 @@ export const useConversationsStore = defineStore('conversations', () => {
   const activeId = ref(null)
   const sidebarOpen = ref(true)
   const boundKeyCode = ref('')
+  const pendingPrompt = ref('')
+  const deletedConversationIds = ref(new Set())
+  let remoteSyncTimer = null
+  let remoteLoading = false
+  let remoteSyncing = false
+  let pendingRemoteSync = false
+  const pendingDeleteRequests = new Map()
 
   const activeConversation = computed(() =>
     conversations.value.find(c => c.id === activeId.value) ?? null
@@ -45,10 +173,17 @@ export const useConversationsStore = defineStore('conversations', () => {
   )
 
   function persist() {
+    persistLocal()
+    scheduleRemoteSync()
+  }
+
+  function persistLocal() {
     if (!boundKeyCode.value) return
     writeStored(boundKeyCode.value, {
+      version: STORAGE_VERSION,
       conversations: conversations.value,
-      activeId: activeId.value
+      activeId: activeId.value,
+      deletedConversationIds: [...deletedConversationIds.value]
     })
   }
 
@@ -59,13 +194,209 @@ export const useConversationsStore = defineStore('conversations', () => {
     const stored = readStored(normalized)
     conversations.value = stored?.conversations ?? []
     activeId.value = stored?.activeId ?? conversations.value[0]?.id ?? null
+    deletedConversationIds.value = new Set(
+      stored?.version === STORAGE_VERSION ? (stored.deletedConversationIds ?? []) : []
+    )
   }
 
-  function clearAll() {
+  function resetSession() {
+    clearTimeout(remoteSyncTimer)
+    remoteSyncTimer = null
+    pendingRemoteSync = false
     conversations.value = []
     activeId.value = null
-    if (boundKeyCode.value) {
-      localStorage.removeItem(storageKey(boundKeyCode.value))
+    boundKeyCode.value = ''
+    pendingPrompt.value = ''
+    deletedConversationIds.value = new Set()
+  }
+
+  function toRemotePayload() {
+    return {
+      activeId: activeId.value,
+      deletedClientIds: [...deletedConversationIds.value],
+      conversations: conversations.value.map(conv => ({
+        clientId: conv.id,
+        title: conv.title,
+        type: conv.type,
+        createdAt: conv.createdAt,
+        updatedAt: conv.updatedAt,
+        messages: (conv.messages || []).map(msg => ({
+          clientId: msg.id,
+          role: msg.role,
+          content: msg.content || '',
+          sourceImage: msg.sourceImage && !msg.sourceImage.startsWith('data:') ? msg.sourceImage : null,
+          recordId: msg.recordId || msg.record?.id || null,
+          status: messageStatusForSync(msg),
+          errorMessage: messageErrorForSync(msg),
+          createdAt: msg.createdAt
+        }))
+      }))
+    }
+  }
+
+  function materializeRemoteConversation(conv) {
+    return {
+      id: conv.clientId || uid(),
+      title: conv.title || defaultTitle('', conv.type),
+      type: conv.type === 'img2img' ? 'img2img' : 'text2img',
+      createdAt: conv.createdAt || Date.now(),
+      updatedAt: conv.updatedAt || Date.now(),
+      messages: (conv.messages || []).map(msg => ({
+        id: msg.clientId || uid(),
+        role: msg.role,
+        content: msg.content || '',
+        sourceImage: msg.sourceImage || null,
+        recordId: msg.recordId || null,
+        record: msg.recordId ? { id: msg.recordId, status: msg.status } : null,
+        status: msg.status || null,
+        errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
+        createdAt: msg.createdAt || Date.now()
+      }))
+    }
+  }
+
+  function mergeMessage(localMsg, remoteMsg) {
+    if (!localMsg) return remoteMsg
+    if (!remoteMsg) return localMsg
+    const localStatus = resolveRecordStatus(localMsg.record || { status: localMsg.status })
+    const remoteStatus = resolveRecordStatus(remoteMsg.record || { status: remoteMsg.status })
+    const remoteHasResult = remoteStatus === 'completed' || remoteStatus === 'failed' || !!remoteMsg.recordId
+    if (remoteHasResult || localStatus !== 'processing') {
+      return {
+        ...localMsg,
+        ...remoteMsg,
+        sourceImage: remoteMsg.sourceImage || localMsg.sourceImage || null,
+        record: remoteMsg.record || localMsg.record || null
+      }
+    }
+    return {
+      ...remoteMsg,
+      ...localMsg,
+      sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
+      record: localMsg.record || remoteMsg.record || null
+    }
+  }
+
+  function mergeMessages(localMessages = [], remoteMessages = []) {
+    const localById = new Map(localMessages.map(msg => [msg.id, msg]))
+    return remoteMessages
+      .map(remoteMsg => mergeMessage(localById.get(remoteMsg.id), remoteMsg))
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+  }
+
+  function mergeConversation(localConv, remoteConv) {
+    if (!localConv) return remoteConv
+    return {
+      ...remoteConv,
+      messages: mergeMessages(localConv.messages || [], remoteConv.messages || [])
+    }
+  }
+
+  function applyRemotePayload(payload) {
+    const remoteConversations = payload?.conversations || []
+    if (!remoteConversations.length) {
+      conversations.value = []
+      activeId.value = null
+      persistLocal()
+      return true
+    }
+
+    const preferredActiveId = activeId.value
+    const localById = new Map(conversations.value.map(conv => [conv.id, conv]))
+    const remoteIds = new Set()
+    let filteredDeleted = false
+
+    const merged = remoteConversations
+      .filter(conv => {
+        const clientId = conv.clientId
+        const keep = !clientId || !deletedConversationIds.value.has(clientId)
+        if (!keep) filteredDeleted = true
+        return keep
+      })
+      .map(conv => {
+        const remoteConv = materializeRemoteConversation(conv)
+        remoteIds.add(remoteConv.id)
+        return mergeConversation(localById.get(remoteConv.id), remoteConv)
+      })
+
+    for (const localConv of conversations.value) {
+      if (!remoteIds.has(localConv.id) && deletedConversationIds.value.has(localConv.id)) {
+        filteredDeleted = true
+      }
+    }
+
+    conversations.value = merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    activeId.value = conversations.value.some(conv => conv.id === preferredActiveId)
+      ? preferredActiveId
+      : conversations.value.some(conv => conv.id === payload.activeId)
+        ? payload.activeId
+        : conversations.value[0]?.id || null
+    persistLocal()
+    if (filteredDeleted) {
+      scheduleRemoteSync()
+    }
+    return true
+  }
+
+  function scheduleRemoteSync() {
+    if (!hasAuthToken()) return
+    if (remoteLoading || remoteSyncing) {
+      pendingRemoteSync = true
+      return
+    }
+    clearTimeout(remoteSyncTimer)
+    remoteSyncTimer = setTimeout(() => {
+      syncRemote().catch(() => {})
+    }, 500)
+  }
+
+  async function syncRemote() {
+    if (!hasAuthToken()) return false
+    clearTimeout(remoteSyncTimer)
+    if (remoteLoading || remoteSyncing) {
+      pendingRemoteSync = true
+      return false
+    }
+    pendingRemoteSync = false
+    remoteSyncing = true
+    try {
+      const payload = toRemotePayload()
+      const sentDeletedIds = new Set(payload.deletedClientIds)
+      const { data } = await api.post('/chat/sync', payload)
+      if (data.code === 200 && sentDeletedIds.size) {
+        const remaining = new Set(deletedConversationIds.value)
+        for (const id of sentDeletedIds) remaining.delete(id)
+        deletedConversationIds.value = remaining
+        persistLocal()
+      }
+      return data.code === 200
+    } catch (error) {
+      console.warn('Chat sync failed', error)
+      return false
+    } finally {
+      remoteSyncing = false
+      if (pendingRemoteSync) {
+        scheduleRemoteSync()
+      }
+    }
+  }
+
+  async function loadRemote() {
+    if (!hasAuthToken() || remoteLoading || remoteSyncing) return false
+    remoteLoading = true
+    try {
+      const { data } = await api.get('/chat/sync')
+      if (data.code !== 200) return false
+      const applied = applyRemotePayload(data.data)
+      if (!applied && conversations.value.length) {
+        await syncRemote().catch(() => {})
+      }
+      return applied
+    } finally {
+      remoteLoading = false
+      if (pendingRemoteSync) {
+        scheduleRemoteSync()
+      }
     }
   }
 
@@ -95,16 +426,66 @@ export const useConversationsStore = defineStore('conversations', () => {
     const next = (title || '').trim()
     if (!next) return
     conv.title = next
-    conv.updatedAt = Date.now()
     persist()
   }
 
+  function setConversationType(id, type) {
+    const conv = conversations.value.find(c => c.id === id)
+    if (!conv) return null
+    const nextType = type === 'img2img' ? 'img2img' : 'text2img'
+    if (conv.type === nextType) return conv
+    conv.type = nextType
+    persist()
+    return conv
+  }
+
   function deleteConversation(id) {
+    if (id) {
+      deletedConversationIds.value.add(id)
+    }
     conversations.value = conversations.value.filter(c => c.id !== id)
     if (activeId.value === id) {
       activeId.value = conversations.value[0]?.id ?? null
     }
     persist()
+    deleteRemote(id).catch(() => false)
+  }
+
+  function deleteRemote(id) {
+    if (!id || !hasAuthToken()) return Promise.resolve(false)
+    if (pendingDeleteRequests.has(id)) return pendingDeleteRequests.get(id)
+
+    const request = api.delete(`/chat/conversations/${encodeURIComponent(id)}`)
+      .then(({ data }) => {
+        if (data.code !== 200) return false
+        const remaining = new Set(deletedConversationIds.value)
+        remaining.delete(id)
+        deletedConversationIds.value = remaining
+        persistLocal()
+        return true
+      })
+      .catch(error => {
+        console.warn('Chat delete failed', error)
+        return false
+      })
+      .finally(() => pendingDeleteRequests.delete(id))
+
+    pendingDeleteRequests.set(id, request)
+    return request
+  }
+
+  async function flushPendingDeletes() {
+    if (!hasAuthToken()) return deletedConversationIds.value.size === 0
+    if (pendingDeleteRequests.size) {
+      await Promise.allSettled([...pendingDeleteRequests.values()])
+    }
+    for (const id of [...deletedConversationIds.value]) {
+      await deleteRemote(id)
+    }
+    if (deletedConversationIds.value.size) {
+      await syncRemote().catch(() => false)
+    }
+    return deletedConversationIds.value.size === 0
   }
 
   function ensureActive(type = 'text2img') {
@@ -117,13 +498,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   function addExchange(conversationId, { prompt, sourceImage, type, model }) {
     const conv = conversations.value.find(c => c.id === conversationId)
     if (!conv) return null
+    const now = Date.now()
 
     const userMsg = {
       id: uid(),
       role: 'user',
       content: prompt,
       sourceImage: sourceImage || null,
-      createdAt: Date.now()
+      createdAt: now
     }
     const assistantMsg = {
       id: uid(),
@@ -132,7 +514,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       record: null,
       status: 'processing',
       errorMessage: null,
-      createdAt: Date.now()
+      createdAt: now + 1
     }
 
     conv.messages.push(userMsg, assistantMsg)
@@ -152,27 +534,35 @@ export const useConversationsStore = defineStore('conversations', () => {
       let matched = false
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
-        if (msg.recordId === record.id || msg.record?.id === record.id) {
-          msg.recordId = record.id
-          msg.record = { ...record }
-          msg.status = record.status || msg.status
-          msg.errorMessage = record.errorMessage || null
-          conv.updatedAt = Date.now()
-          changed = true
+        if (recordIdEquals(msg.recordId, record.id) || recordIdEquals(msg.record?.id, record.id)) {
+          const nextStatus = resolveRecordStatus(record)
+          const nextErrorMessage = nextStatus === 'completed'
+            ? null
+            : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
+          if (recordChangedForMessage(msg, record, nextStatus, nextErrorMessage)) {
+            msg.recordId = record.id
+            msg.record = recordForMessage(record, nextStatus, nextErrorMessage)
+            msg.status = nextStatus
+            msg.errorMessage = nextErrorMessage
+            if (attachSourceImagePath(conv, msg, record)) {
+              changed = true
+            }
+            changed = true
+          }
           matched = true
         }
       }
 
-      if (!matched && conv.id === activeId.value) {
-        const pending = [...conv.messages].reverse().find(
-          m => m.role === 'assistant' && m.status === 'processing' && !m.recordId
-        )
+      if (!matched) {
+        const pending = findAssistantForRecordClientMessage(conv, record) || findPendingAssistantForRecord(conv, record)
         if (pending) {
           pending.recordId = record.id
-          pending.record = { ...record }
-          pending.status = record.status || pending.status
-          pending.errorMessage = record.errorMessage || null
-          conv.updatedAt = Date.now()
+          pending.status = resolveRecordStatus(record)
+          pending.errorMessage = pending.status === 'completed'
+            ? null
+            : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
+          pending.record = recordForMessage(record, pending.status, pending.errorMessage)
+          attachSourceImagePath(conv, pending, record)
           changed = true
         }
       }
@@ -181,7 +571,163 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (changed) persist()
   }
 
+  function findAssistantForRecordClientMessage(conv, record) {
+    if (!record?.clientMessageId) return null
+    return (conv.messages || []).find(msg =>
+      msg.role === 'assistant' && msg.id === record.clientMessageId
+    ) || null
+  }
+
+  function findPendingAssistantForRecord(conv, record) {
+    const pending = [...(conv.messages || [])].reverse().find(msg => {
+      if (msg.role !== 'assistant' || msg.recordId || msg.record?.id) return false
+      const status = resolveRecordStatus(msg.record || { status: msg.status })
+      if (status !== 'processing') return false
+
+      const userMsg = previousUserMessage(conv, msg)
+      if (!userMsg) return false
+      return canRecoverRecordForMessage(record, conv, msg, userMsg)
+    })
+    if (pending) return pending
+
+    return null
+  }
+
+  function previousUserMessage(conv, assistantMsg) {
+    const index = conv.messages.findIndex(msg => msg.id === assistantMsg.id)
+    if (index <= 0) return null
+    const userMsg = conv.messages[index - 1]
+    return userMsg?.role === 'user' ? userMsg : null
+  }
+
+  function attachSourceImagePath(conv, assistantMsg, record) {
+    if (!record?.sourceImagePath) return false
+    const userMsg = previousUserMessage(conv, assistantMsg)
+    if (!userMsg) return false
+    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
+    userMsg.sourceImage = record.sourceImagePath
+    return true
+  }
+
+  function messageSourceImageForAssistant(conv, assistantMsg) {
+    return previousUserMessage(conv, assistantMsg)?.sourceImage || ''
+  }
+
+  function attachRecordToMessage(messageId, record) {
+    if (!messageId || !record?.id) return false
+
+    const conv = conversations.value.find(c =>
+      c.messages.some(m => m.id === messageId)
+    )
+    if (!conv) return false
+
+    const msg = conv.messages.find(m => m.id === messageId && m.role === 'assistant')
+    if (!msg) return false
+
+    msg.recordId = record.id
+    msg.status = resolveRecordStatus(record)
+    msg.errorMessage = msg.status === 'completed'
+      ? null
+      : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
+    msg.record = recordForMessage(record, msg.status, msg.errorMessage)
+    attachSourceImagePath(conv, msg, record)
+    persist()
+    return true
+  }
+
+  function failAssistantForRecord(recordId, errorMessage) {
+    errorMessage = friendlyGenerationError(errorMessage)
+    let changed = false
+    for (const conv of conversations.value) {
+      for (const msg of conv.messages) {
+        if (msg.role !== 'assistant') continue
+        if (!recordIdEquals(msg.recordId, recordId) && !recordIdEquals(msg.record?.id, recordId)) continue
+        if (resolveRecordStatus(msg.record || { status: msg.status }) === 'completed') continue
+        msg.status = 'failed'
+        msg.errorMessage = errorMessage || '生成失败'
+        changed = true
+      }
+    }
+    if (changed) persist()
+  }
+
+  function syncFromHistoryRecords(records) {
+    if (!records?.length) return
+    const byId = new Map(records.map(record => [Number(record.id), record]))
+    const usedIds = new Set()
+    let changed = false
+
+    for (const conv of conversations.value) {
+      for (const msg of conv.messages) {
+        if (msg.role !== 'assistant') continue
+        const id = msg.recordId || msg.record?.id
+        if (id != null) usedIds.add(Number(id))
+        if (id == null) continue
+        const latest = byId.get(Number(id))
+        if (!latest) continue
+
+        const nextStatus = resolveRecordStatus(latest)
+        const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const imageChanged = latest.imagePath !== msg.record?.imagePath ||
+          !!latest.remoteImageAvailable !== !!msg.record?.remoteImageAvailable
+        const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
+        if (nextStatus !== prevStatus || imageChanged || sourceMissing) {
+          msg.recordId = latest.id
+          msg.status = nextStatus
+          msg.errorMessage = nextStatus === 'completed'
+            ? null
+            : (latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null)
+          msg.record = recordForMessage(latest, nextStatus, msg.errorMessage)
+          attachSourceImagePath(conv, msg, latest)
+          changed = true
+        }
+      }
+
+      for (let i = 0; i < conv.messages.length; i++) {
+        const msg = conv.messages[i]
+        if (msg.role !== 'assistant') continue
+
+        const currentStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const needsRecovered = currentStatus === 'processing' ||
+          !(msg.record?.imagePath || msg.record?.imageUrl || msg.record?.remoteImageAvailable)
+        if (!needsRecovered) continue
+        if (msg.recordId || msg.record?.id) continue
+
+        const userMsg = conv.messages[i - 1]
+        if (!userMsg || userMsg.role !== 'user') continue
+
+        const candidates = records
+          .filter(record =>
+            record?.id != null &&
+            canRecoverRecordForMessage(record, conv, msg, userMsg) &&
+            resolveRecordStatus(record) === 'completed' &&
+            !!(record.imagePath || record.imageUrl || record.remoteImageAvailable)
+          )
+          .sort((a, b) =>
+            Math.abs(recordCreatedTime(a) - msg.createdAt) -
+            Math.abs(recordCreatedTime(b) - msg.createdAt)
+          )
+
+        const latest = candidates[0]
+        if (!latest) continue
+
+        msg.recordId = latest.id
+        msg.status = resolveRecordStatus(latest)
+        msg.errorMessage = msg.status === 'completed'
+          ? null
+          : (latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null)
+        msg.record = recordForMessage(latest, msg.status, msg.errorMessage)
+        attachSourceImagePath(conv, msg, latest)
+        usedIds.add(Number(latest.id))
+        changed = true
+      }
+    }
+
+    if (changed) persist()
+  }
+
   function failLatestAssistant(errorMessage) {
+    errorMessage = friendlyGenerationError(errorMessage)
     const conv = activeConversation.value
     if (!conv) return
     const pending = [...conv.messages].reverse().find(
@@ -190,7 +736,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!pending) return
     pending.status = 'failed'
     pending.errorMessage = errorMessage || '生成失败'
-    conv.updatedAt = Date.now()
     persist()
   }
 
@@ -207,13 +752,17 @@ export const useConversationsStore = defineStore('conversations', () => {
         sourceImage: null,
         createdAt: new Date(record.createdAt || Date.now()).getTime()
       }
+      const status = resolveRecordStatus(record)
+      const errorMessage = status === 'completed'
+        ? null
+        : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
       const assistantMsg = {
         id: uid(),
         role: 'assistant',
         recordId: record.id,
-        record: { ...record },
-        status: record.status || 'completed',
-        errorMessage: record.errorMessage || null,
+        record: recordForMessage(record, status, errorMessage),
+        status,
+        errorMessage,
         createdAt: new Date(record.createdAt || Date.now()).getTime() + 1
       }
       return {
@@ -236,23 +785,43 @@ export const useConversationsStore = defineStore('conversations', () => {
     return getImageUrl(msg.record)
   }
 
+  function setPendingPrompt(text) {
+    pendingPrompt.value = text || ''
+  }
+
+  function consumePendingPrompt() {
+    const text = pendingPrompt.value
+    pendingPrompt.value = ''
+    return text
+  }
+
   return {
     conversations,
     activeId,
     sidebarOpen,
+    pendingPrompt,
     activeConversation,
     sortedConversations,
     bindKeyCode,
-    clearAll,
+    resetSession,
     createConversation,
     selectConversation,
     renameConversation,
+    setConversationType,
     deleteConversation,
+    flushPendingDeletes,
     ensureActive,
     addExchange,
     syncRecord,
+    attachRecordToMessage,
     failLatestAssistant,
+    failAssistantForRecord,
+    syncFromHistoryRecords,
     importFromHistory,
-    imageUrlForMessage
+    imageUrlForMessage,
+    setPendingPrompt,
+    consumePendingPrompt,
+    loadRemote,
+    syncRemote
   }
 })

@@ -1,11 +1,28 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useUserStore } from '../stores/user'
-import { getImageUrl } from '../api'
+import { getImageUrl, requestImageBackup } from '../api'
+import ImageLightbox from './ImageLightbox.vue'
 
 const userStore = useUserStore()
 
 const items = computed(() => userStore.history)
+const previewImage = ref('')
+const requestedBackups = new Set()
+
+function ensureLocalBackup(item) {
+  if (!item?.remoteImageAvailable || !item.id || requestedBackups.has(item.id)) return
+  requestedBackups.add(item.id)
+  requestImageBackup(item).catch(() => requestedBackups.delete(item.id))
+}
+const previewAlt = ref('图片预览')
+
+function openPreview(item) {
+  const url = getImageUrl(item)
+  if (!url) return
+  previewImage.value = url
+  previewAlt.value = item.prompt || '生成结果'
+}
 </script>
 
 <template>
@@ -17,12 +34,11 @@ const items = computed(() => userStore.history)
       </div>
 
       <div v-if="items.length === 0" class="empty">
-        <span class="empty-icon">🎨</span>
         <p>还没有生成记录，试试上方的 Generator 吧</p>
       </div>
 
       <div v-else class="gallery-grid">
-        <div v-for="(item, index) in items" :key="item.id" class="gallery-item">
+        <div v-for="(item, index) in items" :key="item.id" class="gallery-item" @click="openPreview(item)">
           <div v-if="item.status === 'processing'" class="processing">
             <span class="spin">⟳</span>
             <span>生成中...</span>
@@ -35,6 +51,7 @@ const items = computed(() => userStore.history)
             loading="lazy"
             decoding="async"
             :fetchpriority="index < 4 ? 'high' : 'low'"
+            @load="ensureLocalBackup(item)"
           />
           <div class="item-overlay">
             <span v-if="item.taskCode" class="item-task">{{ item.taskCode }}</span>
@@ -43,6 +60,7 @@ const items = computed(() => userStore.history)
           </div>
         </div>
       </div>
+      <ImageLightbox :src="previewImage" :alt="previewAlt" @close="previewImage = ''" />
     </div>
   </section>
 </template>

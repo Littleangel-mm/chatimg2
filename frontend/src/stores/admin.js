@@ -1,21 +1,34 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import api from '../api'
+import { useAuthStore } from './auth'
 
 const CACHE_TTL = 30_000
+
+function apiError(e, fallback = '操作失败，请稍后重试') {
+  if (e.response) {
+    return e.response.data?.message || fallback
+  }
+  return e.message || fallback
+}
 
 export const useAdminStore = defineStore('admin', () => {
   const admin = ref(JSON.parse(localStorage.getItem('admin') || 'null'))
   const keys = ref([])
+  const users = ref([])
   const loading = ref(false)
   const tableLoading = ref(false)
+  const userLoading = ref(false)
   const page = ref(0)
   const size = ref(10)
   const total = ref(0)
   const totalPages = ref(0)
   const pageCache = ref({})
 
-  const isLoggedIn = () => !!admin.value
+  const isLoggedIn = () => {
+    const authStore = useAuthStore()
+    return authStore.isAdmin || !!admin.value
+  }
 
   function applyPage(data, p) {
     keys.value = data.list
@@ -52,6 +65,20 @@ export const useAdminStore = defineStore('admin', () => {
     }
   }
 
+  async function fetchUsers() {
+    userLoading.value = true
+    try {
+      const { data } = await api.get('/admin/users')
+      if (data.code !== 200) throw new Error(data.message)
+      users.value = data.data || []
+      return users.value
+    } catch (e) {
+      throw new Error(apiError(e, '用户列表加载失败，请稍后重试'))
+    } finally {
+      userLoading.value = false
+    }
+  }
+
   function prefetchKeys(p = 0) {
     if (getCached(p)) return Promise.resolve(getCached(p))
     return fetchKeys(p, { background: true }).catch(() => {})
@@ -64,22 +91,26 @@ export const useAdminStore = defineStore('admin', () => {
   async function login(username, password) {
     loading.value = true
     try {
-      const { data } = await api.post('/admin/login', { username, password })
-      if (data.code !== 200) throw new Error(data.message)
-      admin.value = data.data
-      localStorage.setItem('admin', JSON.stringify(data.data))
+      const authStore = useAuthStore()
+      const session = await authStore.login({ account: username, password })
+      if (session.role !== 'ADMIN') throw new Error('无管理员权限')
+      admin.value = session
+      localStorage.setItem('admin', JSON.stringify(session))
       invalidateCache()
       prefetchKeys(0)
-      return data.data
+      return session
     } finally {
       loading.value = false
     }
   }
 
   function logout() {
+    const authStore = useAuthStore()
+    authStore.logout()
     admin.value = null
     localStorage.removeItem('admin')
     keys.value = []
+    users.value = []
     invalidateCache()
   }
 
@@ -118,8 +149,30 @@ export const useAdminStore = defineStore('admin', () => {
     await fetchKeys(nextPage)
   }
 
+  async function resetPassword(userId) {
+    const { data } = await api.post(`/admin/users/${userId}/reset-password`)
+    if (data.code !== 200) throw new Error(data.message)
+    await fetchUsers()
+    return data.data
+  }
+
+  async function crawlInspiration(mediaType) {
+    const { data } = await api.post('/admin/inspiration/crawl', null, {
+      params: mediaType ? { mediaType } : {}
+    })
+    if (data.code !== 200) throw new Error(data.message)
+    return data.data
+  }
+
+  async function inspirationStatus() {
+    const { data } = await api.get('/admin/inspiration/status')
+    if (data.code !== 200) throw new Error(data.message)
+    return data.data
+  }
+
   return {
-    admin, keys, loading, tableLoading, page, size, total, totalPages,
-    isLoggedIn, login, logout, fetchKeys, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits
+    admin, keys, users, loading, tableLoading, userLoading, page, size, total, totalPages,
+    isLoggedIn, login, logout, fetchKeys, fetchUsers, prefetchKeys, createKey, updateKey, deleteKey, resetUsedCredits,
+    resetPassword, crawlInspiration, inspirationStatus
   }
 })

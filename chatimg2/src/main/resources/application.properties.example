@@ -1,0 +1,72 @@
+spring.application.name=chatimg2
+
+# PostgreSQL (tcpKeepAlive 防止生图等待期间连接被防火墙断开)
+# 敏感项通过 src/env/.env 或环境变量注入，参见 .env.example
+spring.datasource.url=jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:chatimg2}?tcpKeepAlive=true&connectTimeout=10&socketTimeout=120&ApplicationName=chatimg2
+spring.datasource.username=${DB_USER:postgres}
+spring.datasource.password=${DB_PASSWORD:}
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# JPA
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+
+# HikariCP — 远程数据库长连接保活
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=2
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.validation-timeout=5000
+spring.datasource.hikari.connection-test-query=SELECT 1
+spring.datasource.hikari.keepalive-time=15000
+spring.datasource.hikari.max-lifetime=180000
+spring.datasource.hikari.idle-timeout=60000
+
+# 运行时图片/视频本地保存目录（启动时自动创建）
+# 相对路径会按应用所在目录解析：/opt/chatimg2/chatimg2.jar -> /opt/chatimg2/img/
+# 如需放到 chatimg2 目录的同级目录，可配置为 ../img/ 或直接使用绝对路径
+app.image.backup-path=./img/
+spring.servlet.multipart.max-file-size=20MB
+spring.servlet.multipart.max-request-size=22MB
+
+# API config
+app.api.key=${API_KEY:${VITE_API_KEY:}}
+app.api.url=${API_URL:${VITE_API_BASE_URL:https://www.maitokens.com}}
+app.api.model.text2img=${API_MODEL_TEXT2IMG:${VITE_IMAGE_MODEL:gpt-image-2}}
+app.api.model.img2img=${API_MODEL_IMG2IMG:gpt-image-2}
+
+# QQ mail verification code. MAIL_PASSWORD is QQ Mail SMTP authorization code, not QQ password.
+spring.mail.host=${MAIL_HOST:smtp.qq.com}
+spring.mail.port=${MAIL_PORT:465}
+spring.mail.username=${MAIL_USERNAME:}
+spring.mail.password=${MAIL_PASSWORD:}
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.ssl.enable=true
+app.mail.from=${MAIL_FROM:${spring.mail.username}}
+
+# 异步生图轮询（gpt-image-2 提交后返回 task_id，需轮询 /v1/tasks/{id}）
+app.api.poll.initial-delay-ms=5000
+app.api.poll.interval-ms=5000
+app.api.poll.max-wait-ms=600000
+
+# HTTP 超时（生图 API 可能耗时数分钟）
+app.api.http.connect-timeout-ms=60000
+app.api.http.submit-read-timeout-ms=600000
+app.api.http.poll-read-timeout-ms=60000
+
+# 灵感画廊爬虫（爬取 img2.ai 的 prompt 库）
+app.inspiration.source-url=${INSPIRATION_SOURCE_URL:https://img2.ai/api/photo-prompt-gallery}
+app.inspiration.page-size=${INSPIRATION_PAGE_SIZE:30}
+app.inspiration.max-pages=${INSPIRATION_MAX_PAGES:100}
+# 是否把灵感画廊媒体下载到本地
+# 图片保存到 img/upimg，视频保存到 img/upvideo
+# 每个媒体旁边会生成同名 .json 保存提示词和来源信息
+# false 表示前端直接使用远程媒体 URL
+app.inspiration.download-images=${INSPIRATION_DOWNLOAD_IMAGES:true}
+# 定时自动爬取（默认每天凌晨 00:00，cron 为 6 段式 秒 分 时 日 月 周）
+app.inspiration.schedule.enabled=${INSPIRATION_SCHEDULE_ENABLED:true}
+app.inspiration.schedule.cron=${INSPIRATION_SCHEDULE_CRON:0 0 0 * * *}
+app.inspiration.schedule.zone=${INSPIRATION_SCHEDULE_ZONE:Asia/Shanghai}
+
+# Server
+server.port=8080

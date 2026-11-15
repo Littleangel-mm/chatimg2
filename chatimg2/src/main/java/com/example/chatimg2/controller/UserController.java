@@ -4,10 +4,17 @@ import com.example.chatimg2.dto.ApiResponse;
 import com.example.chatimg2.dto.GenerateRequest;
 import com.example.chatimg2.entity.ActivationKey;
 import com.example.chatimg2.entity.GenerationRecord;
+import com.example.chatimg2.exception.AppException;
+import com.example.chatimg2.exception.BusinessException;
+import com.example.chatimg2.service.AuthPrincipal;
+import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.ImageGenerationService;
 import com.example.chatimg2.service.KeyService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
@@ -17,13 +24,15 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
+@Slf4j
 public class UserController {
 
     private final KeyService keyService;
     private final ImageGenerationService imageGenerationService;
+    private final AuthService authService;
 
     @PostMapping("/activate")
-    public ApiResponse<Map<String, Object>> activate(@RequestBody Map<String, String> request) {
+    public ApiResponse<Map<String, Object>> activate(@RequestBody Map<String, String> request, HttpServletRequest servletRequest) {
         String keyCode = request.get("keyCode");
         if (keyCode == null || keyCode.isBlank()) {
             return ApiResponse.error(400, "请输入密钥");
@@ -36,6 +45,10 @@ public class UserController {
         }
 
         ActivationKey key = keyOpt.get();
+        Optional<AuthPrincipal> principal = authService.current(servletRequest);
+        if (principal.isPresent() && principal.get().isUser()) {
+            key = keyService.bindToUser(key, principal.get().user());
+        }
 
         Map<String, Object> data = new HashMap<>();
         data.put("keyId", key.getId());
@@ -43,51 +56,147 @@ public class UserController {
         data.put("totalCredits", key.getTotalCredits());
         data.put("usedCredits", key.getUsedCredits());
         data.put("remainingCredits", key.getRemainingCredits());
+        data.put("userId", key.getUserId());
+        data.put("userEmail", key.getUserEmail());
 
         return ApiResponse.success("激活成功", data);
     }
 
     @PostMapping("/generate")
-    public ApiResponse<GenerationRecord> generate(@RequestBody GenerateRequest request) {
-        if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
-            return ApiResponse.error(400, "请提供密钥");
-        }
+    public ApiResponse<GenerationRecord> generate(@RequestBody GenerateRequest request, HttpServletRequest servletRequest) {
         if (request.getPrompt() == null || request.getPrompt().isBlank()) {
             return ApiResponse.error(400, "请输入提示词");
         }
 
         try {
-            GenerationRecord record = imageGenerationService.submitGeneration(
-                    request.getKeyCode(),
-                    request.getPrompt(),
-                    request.getType(),
-                    request.getSourceImage(),
-                    request.getModel());
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            GenerationRecord record;
+            if (principal.isPresent() && principal.get().isUser()) {
+                record = imageGenerationService.submitGenerationForUser(
+                        principal.get().user(),
+                        request.getPrompt(),
+                        request.getType(),
+                        request.getSourceImage(),
+                        request.getModel(),
+                        request.getClientMessageId());
+            } else {
+                if (request.getKeyCode() == null || request.getKeyCode().isBlank()) {
+                    return ApiResponse.error(401, "请先登录或激活密钥");
+                }
+                record = imageGenerationService.submitGeneration(
+                        request.getKeyCode(),
+                        request.getPrompt(),
+                        request.getType(),
+                        request.getSourceImage(),
+                        request.getModel(),
+                        request.getClientMessageId());
+            }
             return ApiResponse.success("任务已提交，正在生成中", record);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
         }
     }
 
     @GetMapping("/generate/{recordId}")
     public ApiResponse<GenerationRecord> getGenerateStatus(
             @PathVariable Integer recordId,
-            @RequestParam String keyCode) {
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
         try {
-            GenerationRecord record = imageGenerationService.getRecordStatus(keyCode, recordId);
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            GenerationRecord record;
+            if (principal.isPresent() && principal.get().isUser()) {
+                record = imageGenerationService.getRecordStatusForUser(principal.get().user(), recordId);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "请先登录或激活密钥");
+                }
+                record = imageGenerationService.getRecordStatus(keyCode, recordId);
+            }
             return ApiResponse.success(record);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
+        }
+    }
+
+    @PostMapping("/generate/{recordId}/backup")
+    public ApiResponse<Void> retryImageBackup(
+            @PathVariable Integer recordId,
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
+        try {
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && principal.get().isUser()) {
+                imageGenerationService.retryRemoteImageBackupForUser(principal.get().user(), recordId);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "Authentication required");
+                }
+                imageGenerationService.retryRemoteImageBackup(keyCode, recordId);
+            }
+            return ApiResponse.success(null);
+        } catch (RuntimeException e) {
+            return requestError(e);
+        }
+    }
+
+    @PostMapping(value = "/generate/{recordId}/backup-upload", consumes = "multipart/form-data")
+    public ApiResponse<Void> uploadImageBackup(
+            @PathVariable Integer recordId,
+            @RequestPart("image") MultipartFile image,
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
+        try {
+            byte[] imageBytes = image.getBytes();
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            if (principal.isPresent() && principal.get().isUser()) {
+                imageGenerationService.saveBrowserImageBackupForUser(
+                        principal.get().user(), recordId, imageBytes);
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "Authentication required");
+                }
+                imageGenerationService.saveBrowserImageBackup(keyCode, recordId, imageBytes);
+            }
+            return ApiResponse.success(null);
+        } catch (RuntimeException e) {
+            return requestError(e);
+        } catch (java.io.IOException e) {
+            log.warn("Read browser image backup failed: recordId={}", recordId, e);
+            return ApiResponse.error(400, "Invalid image upload");
         }
     }
 
     @GetMapping("/history")
-    public ApiResponse<List<GenerationRecord>> getHistory(@RequestParam String keyCode) {
+    public ApiResponse<List<GenerationRecord>> getHistory(
+            @RequestParam(required = false) String keyCode,
+            HttpServletRequest servletRequest) {
         try {
-            List<GenerationRecord> history = imageGenerationService.getHistory(keyCode);
+            Optional<AuthPrincipal> principal = authService.current(servletRequest);
+            List<GenerationRecord> history;
+            if (principal.isPresent() && principal.get().isUser()) {
+                history = imageGenerationService.getHistoryForUser(principal.get().user());
+            } else {
+                if (keyCode == null || keyCode.isBlank()) {
+                    return ApiResponse.error(401, "请先登录或激活密钥");
+                }
+                history = imageGenerationService.getHistory(keyCode);
+            }
             return ApiResponse.success(history);
         } catch (RuntimeException e) {
-            return ApiResponse.error(400, e.getMessage());
+            return requestError(e);
         }
+    }
+
+    private <T> ApiResponse<T> requestError(RuntimeException error) {
+        if (error instanceof BusinessException businessError) {
+            return ApiResponse.error(400, businessError.getUserMessage());
+        }
+        if (error instanceof AppException appError) {
+            log.error("User image request failed: code={}", appError.getErrorCode(), appError);
+            return ApiResponse.error(500, appError.getUserMessage());
+        }
+        log.error("Unexpected user image request failure", error);
+        return ApiResponse.error(500, "请求处理失败，请稍后重试");
     }
 }

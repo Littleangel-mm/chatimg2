@@ -7,7 +7,7 @@ import { prefetchRoute } from '../../utils/prefetch'
 const router = useRouter()
 const adminStore = useAdminStore()
 
-const username = ref('admin')
+const username = ref('')
 const password = ref('')
 const error = ref('')
 
@@ -44,7 +44,7 @@ async function submit() {
         </button>
       </form>
 
-      <router-link to="/" class="back-link tap">← 返回首页</router-link>
+      <router-link to="/" class="btn-primary full back-link tap">返回首页</router-link>
     </div>
   </div>
 </template>
@@ -94,17 +94,18 @@ async function submit() {
 
 .field input:focus { border-color: var(--accent); }
 
-.error { color: #f87171; font-size: 13px; margin-bottom: 12px; }
+.error { color: var(--danger); font-size: 13px; margin-bottom: 12px; }
 
 .full { width: 100%; padding: 14px; }
 
 .back-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  margin-top: 24px;
-  color: var(--text-muted);
-  font-size: 14px;
+  margin-top: 16px;
+  text-decoration: none;
 }
 
-.back-link:hover { color: var(--text); }
+.back-link:hover { color: #fff; }
 </style>
