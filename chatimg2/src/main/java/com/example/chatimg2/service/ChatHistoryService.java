@@ -137,9 +137,14 @@ public class ChatHistoryService {
 
         List<ChatConversation> existing = conversationRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
         Map<String, ChatConversation> existingByClientId = new HashMap<>();
+        Set<String> deletedExistingClientIds = new HashSet<>();
         for (ChatConversation conversation : existing) {
             if (conversation.getClientId() != null) {
-                existingByClientId.put(conversation.getClientId(), conversation);
+                if (conversation.getDeletedAt() != null) {
+                    deletedExistingClientIds.add(conversation.getClientId());
+                } else {
+                    existingByClientId.putIfAbsent(conversation.getClientId(), conversation);
+                }
             }
         }
 
@@ -158,7 +163,9 @@ public class ChatHistoryService {
             if (clientId == null) {
                 continue;
             }
-            if (deletedClientIds.contains(clientId) || !processedConversationIds.add(clientId)) {
+            if (deletedClientIds.contains(clientId)
+                    || deletedExistingClientIds.contains(clientId)
+                    || !processedConversationIds.add(clientId)) {
                 continue;
             }
             ChatConversation conversation = existingByClientId.getOrDefault(clientId, new ChatConversation());
@@ -196,18 +203,35 @@ public class ChatHistoryService {
             return;
         }
         lockUserForWrite(user);
-        conversationRepository.findByUserIdAndClientId(user.getId(), normalized)
-                .ifPresent(conversation -> {
-                    if (conversation.getDeletedAt() != null) {
-                        return;
-                    }
-                    LocalDateTime now = LocalDateTime.now();
-                    conversation.setDeletedAt(now);
-                    conversation.setUpdatedAt(now);
-                    conversationRepository.save(conversation);
-                    log.info("Chat conversation soft deleted: user={}, clientId={}",
-                            user.getEmail(), normalized);
-                });
+        List<ChatConversation> conversations = conversationRepository
+                .findAllByUserIdAndClientId(user.getId(), normalized);
+        if (conversations.isEmpty()) {
+            ChatConversation tombstone = new ChatConversation();
+            tombstone.setUserId(user.getId());
+            tombstone.setUserEmail(authService.normalizeEmail(user.getEmail()));
+            tombstone.setClientId(normalized);
+            tombstone.setTitle("已删除对话");
+            tombstone.setConversationType("text2img");
+            tombstone.setDeletedAt(LocalDateTime.now());
+            conversationRepository.save(tombstone);
+            log.info("Chat deletion tombstone created: user={}, clientId={}",
+                    user.getEmail(), normalized);
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        boolean changed = false;
+        for (ChatConversation conversation : conversations) {
+            if (conversation.getDeletedAt() == null) {
+                conversation.setDeletedAt(now);
+                changed = true;
+            }
+            conversation.setUpdatedAt(now);
+        }
+        if (changed) {
+            conversationRepository.saveAll(conversations);
+            log.info("Chat conversations soft deleted: user={}, clientId={}, count={}",
+                    user.getEmail(), normalized, conversations.size());
+        }
     }
 
     private ChatConversationDto toDto(ChatConversation conversation, List<ChatMessage> messages,

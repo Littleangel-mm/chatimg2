@@ -68,14 +68,14 @@ class ChatHistoryServiceTest {
     void softDeleteMarksOnlyTheCurrentUsersConversation() {
         UserAccount user = user(7, "user@qq.com");
         ChatConversation conversation = conversation(31, 7, "client-1");
-        when(conversationRepository.findByUserIdAndClientId(7, "client-1"))
-                .thenReturn(Optional.of(conversation));
+        when(conversationRepository.findAllByUserIdAndClientId(7, "client-1"))
+                .thenReturn(List.of(conversation));
         when(userRepository.findByIdForUpdate(7)).thenReturn(Optional.of(user));
 
         chatHistoryService.softDelete(user, "client-1");
 
         assertNotNull(conversation.getDeletedAt());
-        verify(conversationRepository).save(conversation);
+        verify(conversationRepository).saveAll(List.of(conversation));
     }
 
     @Test
@@ -83,25 +83,28 @@ class ChatHistoryServiceTest {
         UserAccount user = user(7, "user@qq.com");
         ChatConversation conversation = conversation(31, 7, "client-1");
         conversation.setDeletedAt(LocalDateTime.now().minusMinutes(1));
-        when(conversationRepository.findByUserIdAndClientId(7, "client-1"))
-                .thenReturn(Optional.of(conversation));
+        when(conversationRepository.findAllByUserIdAndClientId(7, "client-1"))
+                .thenReturn(List.of(conversation));
         when(userRepository.findByIdForUpdate(7)).thenReturn(Optional.of(user));
 
         chatHistoryService.softDelete(user, "client-1");
 
-        verify(conversationRepository, never()).save(conversation);
+        verify(conversationRepository, never()).saveAll(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
     void softDeleteDoesNotTouchAnotherUsersConversation() {
         UserAccount user = user(7, "user@qq.com");
-        when(conversationRepository.findByUserIdAndClientId(7, "other-client"))
-                .thenReturn(Optional.empty());
+        when(conversationRepository.findAllByUserIdAndClientId(7, "other-client"))
+                .thenReturn(List.of());
         when(userRepository.findByIdForUpdate(7)).thenReturn(Optional.of(user));
 
         chatHistoryService.softDelete(user, "other-client");
 
-        verify(conversationRepository, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(conversationRepository).save(org.mockito.ArgumentMatchers.argThat(saved ->
+                saved.getUserId().equals(7)
+                        && "other-client".equals(saved.getClientId())
+                        && saved.getDeletedAt() != null));
     }
 
     @Test
@@ -367,6 +370,24 @@ class ChatHistoryServiceTest {
             ChatMessage saved = messages.iterator().next();
             return "https://images.example.com/public/reference.png?token=abc"
                     .equals(saved.getSourceImageUrl()) && saved.getImagePath() == null;
+        }));
+    }
+
+    @Test
+    void syncNeverStoresBase64ImageDataInChatMessage() {
+        when(messageRepository.findByConversationId(31)).thenReturn(List.of());
+        ChatMessageDto incoming = new ChatMessageDto();
+        incoming.setClientId("user-base64-image");
+        incoming.setRole("user");
+        incoming.setContent("edit this image");
+        incoming.setSourceImage("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB");
+        incoming.setCreatedAt(System.currentTimeMillis());
+
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(incoming), 7);
+
+        verify(messageRepository).saveAll(org.mockito.ArgumentMatchers.argThat(messages -> {
+            ChatMessage saved = messages.iterator().next();
+            return saved.getSourceImageUrl() == null && saved.getImagePath() == null;
         }));
     }
 

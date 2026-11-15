@@ -18,4 +18,6 @@ public interface ChatConversationRepository extends JpaRepository<ChatConversati
     List<String> findDeletedClientIdsByUserId(@Param("userId") Integer userId);
 
     Optional<ChatConversation> findByUserIdAndClientId(Integer userId, String clientId);
+
+    List<ChatConversation> findAllByUserIdAndClientId(Integer userId, String clientId);
 }
