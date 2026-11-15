@@ -3,6 +3,7 @@ package com.example.chatimg2.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,14 +12,27 @@ class ImageApiErrorClassifierTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void modelNotFoundIsNotRetryable() {
+    void temporaryChannelShortageIsRetryable() {
         var details = parse("""
                 {"error":{"code":"model_not_found","type":"new_api_error",
                 "message":"No available channel for model gpt-image-2"}}
                 """);
 
         assertTrue(ImageApiErrorClassifier.isModelNotFound(details));
-        assertFalse(ImageApiErrorClassifier.isRetryable(503, details));
+        assertTrue(ImageApiErrorClassifier.isRetryable(503, details));
+        assertEquals("生图服务暂时繁忙，请稍后重试",
+                ImageApiErrorClassifier.userMessage(503, details));
+    }
+
+    @Test
+    void actualMissingModelIsNotRetryable() {
+        var details = parse("""
+                {"error":{"code":"model_not_found","type":"invalid_request_error",
+                "message":"The requested model does not exist"}}
+                """);
+
+        assertTrue(ImageApiErrorClassifier.isModelNotFound(details));
+        assertFalse(ImageApiErrorClassifier.isRetryable(404, details));
     }
 
     @Test

@@ -1,24 +1,28 @@
 <script setup>
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import { useAuthStore } from '../../stores/auth'
 import ConversationMenu from './ConversationMenu.vue'
 
 const router = useRouter()
+const route = useRoute()
 const convStore = useConversationsStore()
 const userStore = useUserStore()
 const authStore = useAuthStore()
 
 const emit = defineEmits(['close-mobile'])
+const isVideoRoute = computed(() => route.name === 'video')
 
 function previewText(conv) {
   const messages = conv?.messages || []
   const latest = [...messages].reverse().find(msg => {
-    return (msg?.content || '').trim() || msg?.sourceImage || msg?.record?.imagePath
+    return (msg?.content || '').trim() || msg?.sourceImage || msg?.record?.imagePath || msg?.videoTask || msg?.status
   })
   if (!latest) {
+    if (conv?.type === 'image2video') return '上传参考图，生成视频'
+    if (conv?.type === 'text2video') return '描述你想生成的视频'
     return conv?.type === 'img2img' ? '上传参考图，继续改图细节' : '描述你想生成的画面'
   }
   if ((latest.content || '').trim()) {
@@ -30,19 +34,39 @@ function previewText(conv) {
   if (latest.record?.imagePath) {
     return '生成完成'
   }
+  if (latest.videoTask?.status === 'completed') return '视频生成完成'
+  if (latest.videoTask?.status === 'failed' || latest.status === 'failed') return '视频生成失败'
+  if (latest.videoTask || latest.status === 'processing') return '正在生成，就快好了喵～'
+  if (conv?.type === 'image2video') return '图生视频对话'
+  if (conv?.type === 'text2video') return '文生视频对话'
   return conv?.type === 'img2img' ? '图生图对话' : '文生图对话'
 }
 
-const items = computed(() =>
-  convStore.sortedConversations.map(conv => ({
-    ...conv,
-    preview: previewText(conv)
-  }))
-)
+const items = computed(() => {
+  return convStore.sortedConversations
+    .filter(conv => isVideoRoute.value
+      ? conv.type === 'text2video' || conv.type === 'image2video'
+      : conv.type !== 'text2video' && conv.type !== 'image2video')
+    .map(conv => ({ ...conv, preview: previewText(conv) }))
+})
 
 function newChat() {
-  convStore.createConversation('text2img')
+  if (route.name === 'home') {
+    convStore.createConversation('text2img')
+  } else {
+    convStore.activateGenerationArea('image')
+  }
+  router.push('/')
   emit('close-mobile')
+}
+
+function toggleSidebar() {
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    convStore.sidebarOpen = false
+    emit('close-mobile')
+    return
+  }
+  convStore.sidebarOpen = !convStore.sidebarOpen
 }
 
 function openInspiration() {
@@ -50,8 +74,21 @@ function openInspiration() {
   emit('close-mobile')
 }
 
+function openVideo() {
+  if (route.name === 'video') {
+    convStore.createConversation('text2video')
+  } else {
+    convStore.activateGenerationArea('video')
+  }
+  router.push('/video')
+  emit('close-mobile')
+}
+
 function select(id) {
   convStore.selectConversation(id)
+  const selected = convStore.conversations.find(conv => conv.id === id)
+  const video = selected?.type === 'text2video' || selected?.type === 'image2video'
+  router.push(video ? '/video' : '/')
   emit('close-mobile')
 }
 
@@ -79,20 +116,30 @@ async function logout() {
 <template>
   <aside class="sidebar" :class="{ collapsed: !convStore.sidebarOpen }">
     <div class="sidebar-top">
-      <button class="sidebar-toggle" title="收起侧边栏" @click="convStore.sidebarOpen = !convStore.sidebarOpen">
+      <button class="sidebar-toggle" title="收起侧边栏" @click="toggleSidebar">
         &#9776;
       </button>
       <span class="brand">img2.ai</span>
     </div>
 
     <div class="new-actions">
-      <button class="new-btn" @click="newChat">新对话</button>
-      <button class="new-btn gallery" @click="openInspiration">灵感画廊</button>
+      <button class="new-btn" @click="newChat">图片生成</button>
+      <button class="new-btn gallery" :class="{ active: route.name === 'inspiration' }" @click="openInspiration">
+        灵感画廊
+      </button>
+      <button class="new-btn video" :class="{ active: route.name === 'video' }" @click="openVideo">
+        视频生成
+      </button>
     </div>
 
     <div class="conv-list">
       <p v-if="items.length === 0" class="empty-hint">暂无对话，点击上方开始</p>
-      <div v-for="conv in items" :key="conv.id" class="conv-item" :class="{ active: conv.id === convStore.activeId }">
+      <div
+        v-for="conv in items"
+        :key="conv.id"
+        class="conv-item"
+        :class="{ active: conv.id === convStore.activeId }"
+      >
         <button type="button" class="conv-body" @click="select(conv.id)">
           <span class="conv-title">{{ conv.title }}</span>
           <span class="conv-preview">{{ conv.preview }}</span>
@@ -201,6 +248,23 @@ async function logout() {
 .new-btn.gallery:hover {
   background: var(--gradient);
   opacity: 0.94;
+}
+
+.new-btn.gallery.active {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.66), 0 7px 20px rgba(224, 155, 176, 0.38);
+}
+
+.new-btn.video {
+  color: var(--text-strong);
+  background: rgba(255, 251, 249, 0.9);
+  border-color: rgba(201, 168, 108, 0.42);
+}
+
+.new-btn.video:hover,
+.new-btn.video.active {
+  color: var(--accent-hover);
+  background: linear-gradient(135deg, rgba(242, 184, 198, 0.2), rgba(216, 180, 120, 0.18));
+  border-color: var(--accent-border);
 }
 
 .conv-list {

@@ -2,12 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '../api'
 import { getImageUrl } from '../api'
+import { friendlyGenerationError, resolveGenerationStatus } from '../utils/generation'
 
 const STORAGE_PREFIX = 'conversations_'
 const STORAGE_VERSION = 2
-const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
-const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
-const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
 
 function storageKey(keyCode) {
   return `${STORAGE_PREFIX}${keyCode || 'guest'}`
@@ -22,29 +20,46 @@ function readStored(keyCode) {
 }
 
 function writeStored(keyCode, data) {
-  localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
+  try {
+    localStorage.setItem(storageKey(keyCode), JSON.stringify(data))
+  } catch (error) {
+    console.warn('Local chat cache is full; keeping conversation in memory', error)
+  }
 }
 
 function hasAuthToken() {
   return !!localStorage.getItem('authToken')
 }
 
+function isVideoType(type) {
+  return type === 'text2video' || type === 'image2video'
+}
+
+function generationArea(type) {
+  return isVideoType(type) ? 'video' : 'image'
+}
+
+function normalizeConversationType(type) {
+  if (type === 'img2img' || isVideoType(type)) return type
+  return 'text2img'
+}
+
+function sourceImages(message) {
+  const images = Array.isArray(message?.sourceImages)
+    ? message.sourceImages.filter(value => typeof value === 'string' && value)
+    : []
+  if (images.length) return images
+  return message?.sourceImage ? [message.sourceImage] : []
+}
+
+function mergeSourceImages(primary, secondary) {
+  const primaryImages = sourceImages(primary)
+  const secondaryImages = sourceImages(secondary)
+  return secondaryImages.length > primaryImages.length ? secondaryImages : primaryImages
+}
+
 function recordIdEquals(a, b) {
   return Number(a) === Number(b)
-}
-
-function resolveRecordStatus(record) {
-  const status = (record?.status || '').toLowerCase()
-  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
-  if (status === 'completed') return 'processing'
-  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
-  if (status === 'failed') return status
-  return status || 'processing'
-}
-
-function isRecoveryInterruptedRecord(record) {
-  const message = record?.errorMessage || ''
-  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
 }
 
 function recordForMessage(record, status, errorMessage) {
@@ -57,39 +72,14 @@ function recordForMessage(record, status, errorMessage) {
 
 function messageStatusForSync(msg) {
   if (msg?.role !== 'assistant') return null
-  return resolveRecordStatus(msg.record || { status: msg.status })
+  if (msg.videoTask) return msg.videoTask.status || msg.status || null
+  return resolveGenerationStatus(msg.record || { status: msg.status })
 }
 
 function messageErrorForSync(msg) {
   const status = messageStatusForSync(msg)
   if (status === 'completed') return null
   return msg.errorMessage || msg.record?.errorMessage || null
-}
-
-function friendlyGenerationError(message, record = null) {
-  const text = message || ''
-  const policyAdvice = extractPolicyAdvice(text)
-  if (policyAdvice) {
-    return `${POLICY_ADVICE_PREFIX}${policyAdvice}`
-  }
-  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
-  if (record?.generationType === 'img2img' || rawApiError) {
-    return '生成失败，请更换图片重试'
-  }
-  return text || '生成失败'
-}
-
-function extractPolicyAdvice(text) {
-  if (!text) return ''
-  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
-  if (markerIndex >= 0) {
-    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
-  }
-  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
-  if (legacyIndex >= 0) {
-    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
-  }
-  return ''
 }
 
 function recordCreatedTime(record) {
@@ -100,14 +90,17 @@ function recordCreatedTime(record) {
 function recordChangedForMessage(msg, record, nextStatus, nextErrorMessage) {
   const current = msg.record || {}
   return !recordIdEquals(msg.recordId || current.id, record.id) ||
-    resolveRecordStatus(msg.record || { status: msg.status }) !== nextStatus ||
+    resolveGenerationStatus(msg.record || { status: msg.status }) !== nextStatus ||
     (current.imagePath || '') !== (record.imagePath || '') ||
     !!current.remoteImageAvailable !== !!record.remoteImageAvailable ||
+    !!current.recoverable !== !!record.recoverable ||
     (current.sourceImagePath || '') !== (record.sourceImagePath || '') ||
+    JSON.stringify(current.sourceImagePaths || []) !== JSON.stringify(record.sourceImagePaths || []) ||
     (msg.errorMessage || '') !== (nextErrorMessage || '')
 }
 
 function recordMatchesConversation(record, conv, userMsg = null) {
+  if (isVideoType(conv?.type)) return false
   const type = record?.generationType === 'img2img' ? 'img2img' : 'text2img'
   const expectedType = userMsg?.sourceImage ? 'img2img' : (conv?.type || 'text2img')
   return type === expectedType
@@ -145,9 +138,16 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+function touchConversation(conversation) {
+  const previous = Number(conversation?.updatedAt || 0)
+  conversation.updatedAt = Math.max(Date.now(), previous + 1)
+}
+
 function defaultTitle(prompt, type) {
   const text = (prompt || '').trim()
   if (text) return text.length > 28 ? `${text.slice(0, 28)}…` : text
+  if (type === 'image2video') return '图生视频对话'
+  if (type === 'text2video') return '文生视频对话'
   return type === 'img2img' ? '图生图对话' : '文生图对话'
 }
 
@@ -162,6 +162,10 @@ export const useConversationsStore = defineStore('conversations', () => {
   let remoteLoading = false
   let remoteSyncing = false
   let pendingRemoteSync = false
+  const lastActiveByArea = {
+    image: null,
+    video: null
+  }
   const pendingDeleteRequests = new Map()
 
   const activeConversation = computed(() =>
@@ -194,6 +198,10 @@ export const useConversationsStore = defineStore('conversations', () => {
     const stored = readStored(normalized)
     conversations.value = stored?.conversations ?? []
     activeId.value = stored?.activeId ?? conversations.value[0]?.id ?? null
+    lastActiveByArea.image = null
+    lastActiveByArea.video = null
+    const active = conversations.value.find(conv => conv.id === activeId.value)
+    if (active) lastActiveByArea[generationArea(active.type)] = active.id
     deletedConversationIds.value = new Set(
       stored?.version === STORAGE_VERSION ? (stored.deletedConversationIds ?? []) : []
     )
@@ -205,6 +213,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     pendingRemoteSync = false
     conversations.value = []
     activeId.value = null
+    lastActiveByArea.image = null
+    lastActiveByArea.video = null
     boundKeyCode.value = ''
     pendingPrompt.value = ''
     deletedConversationIds.value = new Set()
@@ -226,6 +236,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           content: msg.content || '',
           sourceImage: msg.sourceImage && !msg.sourceImage.startsWith('data:') ? msg.sourceImage : null,
           recordId: msg.recordId || msg.record?.id || null,
+          videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
           status: messageStatusForSync(msg),
           errorMessage: messageErrorForSync(msg),
           createdAt: msg.createdAt
@@ -235,10 +246,10 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function materializeRemoteConversation(conv) {
-    return {
+    const materialized = {
       id: conv.clientId || uid(),
       title: conv.title || defaultTitle('', conv.type),
-      type: conv.type === 'img2img' ? 'img2img' : 'text2img',
+      type: normalizeConversationType(conv.type),
       createdAt: conv.createdAt || Date.now(),
       updatedAt: conv.updatedAt || Date.now(),
       messages: (conv.messages || []).map(msg => ({
@@ -246,72 +257,131 @@ export const useConversationsStore = defineStore('conversations', () => {
         role: msg.role,
         content: msg.content || '',
         sourceImage: msg.sourceImage || null,
+        sourceImages: msg.sourceImage ? [msg.sourceImage] : [],
         recordId: msg.recordId || null,
-        record: msg.recordId ? { id: msg.recordId, status: msg.status } : null,
+        record: msg.recordId ? {
+          id: msg.recordId,
+          status: msg.status,
+          imagePath: msg.recordImagePath || null,
+          sourceImagePath: msg.recordSourceImagePath || null,
+          sourceImagePaths: msg.recordSourceImagePaths || [],
+          remoteImageAvailable: !!msg.recordRemoteImageAvailable,
+          taskCode: msg.recordTaskCode || null,
+          generationType: msg.recordGenerationType || null,
+          recoverable: !!msg.recordRecoverable,
+          errorMessage: msg.errorMessage || null
+        } : null,
+        videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
+        videoTask: msg.videoTask || null,
         status: msg.status || null,
         errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
         createdAt: msg.createdAt || Date.now()
       }))
     }
+    for (let index = 1; index < materialized.messages.length; index++) {
+      const message = materialized.messages[index]
+      const previous = materialized.messages[index - 1]
+      if (message.role === 'assistant' && previous.role === 'user') {
+        const images = message.record?.sourceImagePaths?.length
+          ? message.record.sourceImagePaths : (message.record?.sourceImagePath ? [message.record.sourceImagePath] : [])
+        if (images.length) {
+          previous.sourceImage = images[0]
+          previous.sourceImages = images
+        }
+      }
+    }
+    return materialized
   }
 
   function mergeMessage(localMsg, remoteMsg) {
     if (!localMsg) return remoteMsg
     if (!remoteMsg) return localMsg
-    const localStatus = resolveRecordStatus(localMsg.record || { status: localMsg.status })
-    const remoteStatus = resolveRecordStatus(remoteMsg.record || { status: remoteMsg.status })
+    const localStatus = resolveGenerationStatus(localMsg.record || { status: localMsg.status })
+    const remoteStatus = resolveGenerationStatus(remoteMsg.record || { status: remoteMsg.status })
+    if ((localStatus === 'completed' || localStatus === 'failed') && remoteStatus === 'processing') {
+      const merged = {
+        ...remoteMsg,
+        ...localMsg,
+        sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
+        record: localMsg.record || remoteMsg.record || null,
+        videoTask: localMsg.videoTask || remoteMsg.videoTask || null
+      }
+      merged.sourceImages = mergeSourceImages(localMsg, remoteMsg)
+      return merged
+    }
     const remoteHasResult = remoteStatus === 'completed' || remoteStatus === 'failed' || !!remoteMsg.recordId
     if (remoteHasResult || localStatus !== 'processing') {
-      return {
+      const merged = {
         ...localMsg,
         ...remoteMsg,
         sourceImage: remoteMsg.sourceImage || localMsg.sourceImage || null,
-        record: remoteMsg.record || localMsg.record || null
+        record: remoteMsg.record || localMsg.record || null,
+        videoTask: remoteMsg.videoTask || localMsg.videoTask || null
       }
+      merged.sourceImages = mergeSourceImages(remoteMsg, localMsg)
+      return merged
     }
-    return {
+    const merged = {
       ...remoteMsg,
       ...localMsg,
       sourceImage: localMsg.sourceImage || remoteMsg.sourceImage || null,
-      record: localMsg.record || remoteMsg.record || null
+      record: localMsg.record || remoteMsg.record || null,
+      videoTask: localMsg.videoTask || remoteMsg.videoTask || null
     }
+    merged.sourceImages = mergeSourceImages(localMsg, remoteMsg)
+    return merged
   }
 
   function mergeMessages(localMessages = [], remoteMessages = []) {
     const localById = new Map(localMessages.map(msg => [msg.id, msg]))
-    return remoteMessages
-      .map(remoteMsg => mergeMessage(localById.get(remoteMsg.id), remoteMsg))
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    const remoteIds = new Set(remoteMessages.map(msg => msg.id))
+    const merged = remoteMessages.map(remoteMsg => mergeMessage(localById.get(remoteMsg.id), remoteMsg))
+    for (const localMsg of localMessages) {
+      if (!remoteIds.has(localMsg.id)) merged.push(localMsg)
+    }
+    return merged.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
   }
 
   function mergeConversation(localConv, remoteConv) {
     if (!localConv) return remoteConv
+    const localIsNewer = (localConv.updatedAt || 0) >= (remoteConv.updatedAt || 0)
     return {
-      ...remoteConv,
+      ...(localIsNewer ? remoteConv : localConv),
+      ...(localIsNewer ? localConv : remoteConv),
       messages: mergeMessages(localConv.messages || [], remoteConv.messages || [])
     }
   }
 
   function applyRemotePayload(payload) {
     const remoteConversations = payload?.conversations || []
+    const serverDeletedIds = (payload?.deletedClientIds || []).filter(Boolean)
+    deletedConversationIds.value = new Set([
+      ...deletedConversationIds.value,
+      ...serverDeletedIds
+    ])
+    const retainedLocalConversations = conversations.value.filter(
+      conv => !deletedConversationIds.value.has(conv.id)
+    )
+
     if (!remoteConversations.length) {
-      conversations.value = []
+      conversations.value = retainedLocalConversations
+      if (conversations.value.length) {
+        persistLocal()
+        return false
+      }
       activeId.value = null
       persistLocal()
       return true
     }
 
     const preferredActiveId = activeId.value
-    const localById = new Map(conversations.value.map(conv => [conv.id, conv]))
+    const localById = new Map(retainedLocalConversations.map(conv => [conv.id, conv]))
     const remoteIds = new Set()
-    let filteredDeleted = false
 
     const merged = remoteConversations
       .filter(conv => {
         const clientId = conv.clientId
-        const keep = !clientId || !deletedConversationIds.value.has(clientId)
-        if (!keep) filteredDeleted = true
-        return keep
+        return !clientId || !deletedConversationIds.value.has(clientId)
       })
       .map(conv => {
         const remoteConv = materializeRemoteConversation(conv)
@@ -319,9 +389,9 @@ export const useConversationsStore = defineStore('conversations', () => {
         return mergeConversation(localById.get(remoteConv.id), remoteConv)
       })
 
-    for (const localConv of conversations.value) {
-      if (!remoteIds.has(localConv.id) && deletedConversationIds.value.has(localConv.id)) {
-        filteredDeleted = true
+    for (const localConv of retainedLocalConversations) {
+      if (!remoteIds.has(localConv.id)) {
+        merged.push(localConv)
       }
     }
 
@@ -332,9 +402,6 @@ export const useConversationsStore = defineStore('conversations', () => {
         ? payload.activeId
         : conversations.value[0]?.id || null
     persistLocal()
-    if (filteredDeleted) {
-      scheduleRemoteSync()
-    }
     return true
   }
 
@@ -361,13 +428,9 @@ export const useConversationsStore = defineStore('conversations', () => {
     remoteSyncing = true
     try {
       const payload = toRemotePayload()
-      const sentDeletedIds = new Set(payload.deletedClientIds)
       const { data } = await api.post('/chat/sync', payload)
-      if (data.code === 200 && sentDeletedIds.size) {
-        const remaining = new Set(deletedConversationIds.value)
-        for (const id of sentDeletedIds) remaining.delete(id)
-        deletedConversationIds.value = remaining
-        persistLocal()
+      if (data.code === 200) {
+        applyRemotePayload(data.data)
       }
       return data.code === 200
     } catch (error) {
@@ -401,23 +464,53 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function createConversation(type = 'text2img') {
+    const normalizedType = normalizeConversationType(type)
     const conv = {
       id: uid(),
-      title: type === 'img2img' ? '新图生图' : '新对话',
-      type,
+      title: normalizedType === 'img2img'
+        ? '新图生图'
+        : normalizedType === 'image2video'
+          ? '新图生视频'
+          : normalizedType === 'text2video'
+            ? '新视频'
+            : '新对话',
+      type: normalizedType,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: []
     }
     conversations.value.unshift(conv)
     activeId.value = conv.id
+    lastActiveByArea[generationArea(conv.type)] = conv.id
     persist()
     return conv
   }
 
   function selectConversation(id) {
+    const conv = conversations.value.find(c => c.id === id)
+    if (!conv) return null
     activeId.value = id
+    lastActiveByArea[generationArea(conv.type)] = conv.id
     persist()
+    return conv
+  }
+
+  function activateGenerationArea(area = 'image') {
+    const targetArea = area === 'video' ? 'video' : 'image'
+    const current = activeConversation.value
+    if (current) {
+      lastActiveByArea[generationArea(current.type)] = current.id
+      if (generationArea(current.type) === targetArea) return current
+    }
+
+    const rememberedId = lastActiveByArea[targetArea]
+    const remembered = rememberedId
+      ? conversations.value.find(conv => conv.id === rememberedId && generationArea(conv.type) === targetArea)
+      : null
+    const target = remembered || sortedConversations.value.find(conv => generationArea(conv.type) === targetArea)
+    if (target) return selectConversation(target.id)
+
+    return createConversation(targetArea === 'video' ? 'text2video' : 'text2img')
   }
 
   function renameConversation(id, title) {
@@ -426,20 +519,25 @@ export const useConversationsStore = defineStore('conversations', () => {
     const next = (title || '').trim()
     if (!next) return
     conv.title = next
+    touchConversation(conv)
     persist()
   }
 
   function setConversationType(id, type) {
     const conv = conversations.value.find(c => c.id === id)
     if (!conv) return null
-    const nextType = type === 'img2img' ? 'img2img' : 'text2img'
+    const nextType = normalizeConversationType(type)
     if (conv.type === nextType) return conv
     conv.type = nextType
+    lastActiveByArea[generationArea(nextType)] = conv.id
+    touchConversation(conv)
     persist()
     return conv
   }
 
   function deleteConversation(id) {
+    if (lastActiveByArea.image === id) lastActiveByArea.image = null
+    if (lastActiveByArea.video === id) lastActiveByArea.video = null
     if (id) {
       deletedConversationIds.value.add(id)
     }
@@ -458,9 +556,6 @@ export const useConversationsStore = defineStore('conversations', () => {
     const request = api.delete(`/chat/conversations/${encodeURIComponent(id)}`)
       .then(({ data }) => {
         if (data.code !== 200) return false
-        const remaining = new Set(deletedConversationIds.value)
-        remaining.delete(id)
-        deletedConversationIds.value = remaining
         persistLocal()
         return true
       })
@@ -475,17 +570,14 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   async function flushPendingDeletes() {
-    if (!hasAuthToken()) return deletedConversationIds.value.size === 0
+    if (!hasAuthToken()) return false
     if (pendingDeleteRequests.size) {
       await Promise.allSettled([...pendingDeleteRequests.values()])
     }
-    for (const id of [...deletedConversationIds.value]) {
-      await deleteRemote(id)
-    }
     if (deletedConversationIds.value.size) {
-      await syncRemote().catch(() => false)
+      return syncRemote().catch(() => false)
     }
-    return deletedConversationIds.value.size === 0
+    return true
   }
 
   function ensureActive(type = 'text2img') {
@@ -495,7 +587,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     return activeConversation.value
   }
 
-  function addExchange(conversationId, { prompt, sourceImage, type, model }) {
+  function addExchange(conversationId, { prompt, sourceImage, sourceImages: inputImages, type }) {
     const conv = conversations.value.find(c => c.id === conversationId)
     if (!conv) return null
     const now = Date.now()
@@ -505,6 +597,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       role: 'user',
       content: prompt,
       sourceImage: sourceImage || null,
+      sourceImages: Array.isArray(inputImages) ? inputImages.filter(Boolean) : (sourceImage ? [sourceImage] : []),
       createdAt: now
     }
     const assistantMsg = {
@@ -521,7 +614,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (conv.messages.length === 2) {
       conv.title = defaultTitle(prompt, type || conv.type)
     }
-    conv.updatedAt = Date.now()
+    touchConversation(conv)
     persist()
     return { userMsg, assistantMsg }
   }
@@ -535,7 +628,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
         if (recordIdEquals(msg.recordId, record.id) || recordIdEquals(msg.record?.id, record.id)) {
-          const nextStatus = resolveRecordStatus(record)
+          const nextStatus = resolveGenerationStatus(record)
           const nextErrorMessage = nextStatus === 'completed'
             ? null
             : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
@@ -557,7 +650,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const pending = findAssistantForRecordClientMessage(conv, record) || findPendingAssistantForRecord(conv, record)
         if (pending) {
           pending.recordId = record.id
-          pending.status = resolveRecordStatus(record)
+          pending.status = resolveGenerationStatus(record)
           pending.errorMessage = pending.status === 'completed'
             ? null
             : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
@@ -581,7 +674,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   function findPendingAssistantForRecord(conv, record) {
     const pending = [...(conv.messages || [])].reverse().find(msg => {
       if (msg.role !== 'assistant' || msg.recordId || msg.record?.id) return false
-      const status = resolveRecordStatus(msg.record || { status: msg.status })
+      const status = resolveGenerationStatus(msg.record || { status: msg.status })
       if (status !== 'processing') return false
 
       const userMsg = previousUserMessage(conv, msg)
@@ -600,12 +693,30 @@ export const useConversationsStore = defineStore('conversations', () => {
     return userMsg?.role === 'user' ? userMsg : null
   }
 
-  function attachSourceImagePath(conv, assistantMsg, record) {
-    if (!record?.sourceImagePath) return false
+  function attachVideoInputAssets(conv, assistantMsg, task) {
+    const images = (task?.inputAssets || [])
+      .filter(asset => asset?.mediaType === 'IMAGE' && asset?.sourceUrl)
+      .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+      .map(asset => asset.sourceUrl)
+    if (!images.length) return false
     const userMsg = previousUserMessage(conv, assistantMsg)
     if (!userMsg) return false
-    if (userMsg.sourceImage && !userMsg.sourceImage.startsWith('data:')) return false
-    userMsg.sourceImage = record.sourceImagePath
+    const current = sourceImages(userMsg)
+    if (JSON.stringify(current) === JSON.stringify(images)) return false
+    userMsg.sourceImage = images[0]
+    userMsg.sourceImages = images
+    return true
+  }
+
+  function attachSourceImagePath(conv, assistantMsg, record) {
+    const images = record?.sourceImagePaths?.length
+      ? record.sourceImagePaths : (record?.sourceImagePath ? [record.sourceImagePath] : [])
+    if (!images.length) return false
+    const userMsg = previousUserMessage(conv, assistantMsg)
+    if (!userMsg) return false
+    if (JSON.stringify(sourceImages(userMsg)) === JSON.stringify(images)) return false
+    userMsg.sourceImage = images[0]
+    userMsg.sourceImages = images
     return true
   }
 
@@ -625,7 +736,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (!msg) return false
 
     msg.recordId = record.id
-    msg.status = resolveRecordStatus(record)
+    msg.status = resolveGenerationStatus(record)
     msg.errorMessage = msg.status === 'completed'
       ? null
       : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
@@ -635,6 +746,86 @@ export const useConversationsStore = defineStore('conversations', () => {
     return true
   }
 
+  function attachVideoTaskToMessage(messageId, task) {
+    if (!messageId || !task?.taskCode) return false
+    const conv = conversations.value.find(c => c.messages.some(message => message.id === messageId))
+    if (!conv) return false
+    const message = conv.messages.find(item => item.id === messageId && item.role === 'assistant')
+    if (!message) return false
+    message.videoTaskCode = task.taskCode
+    message.videoTask = task
+    message.status = task.status || 'processing'
+    message.errorMessage = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+    attachVideoInputAssets(conv, message, task)
+    touchConversation(conv)
+    persist()
+    return true
+  }
+
+  function syncVideoTask(task) {
+    if (!task?.taskCode) return false
+    let changed = false
+    for (const conv of conversations.value) {
+      let conversationChanged = false
+      for (const message of conv.messages || []) {
+        if (message.role !== 'assistant') continue
+        const matchesCode = message.videoTaskCode === task.taskCode || message.videoTask?.taskCode === task.taskCode
+        const matchesClient = !message.videoTaskCode && task.clientMessageId && message.id === task.clientMessageId
+        if (!matchesCode && !matchesClient) continue
+        const previous = message.videoTask || {}
+        const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+        const inputsChanged = attachVideoInputAssets(conv, message, task)
+        if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+            JSON.stringify(previous.inputAssets || []) !== JSON.stringify(task.inputAssets || []) ||
+            JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
+            (message.errorMessage || null) !== nextError || inputsChanged) {
+          message.videoTaskCode = task.taskCode
+          message.videoTask = task
+          message.status = task.status || 'processing'
+          message.errorMessage = nextError
+          changed = true
+          conversationChanged = true
+        }
+      }
+      if (conversationChanged) touchConversation(conv)
+    }
+    if (changed) persist()
+    return changed
+  }
+
+  function syncVideoTasks(tasks) {
+    let changed = false
+    for (const task of tasks || []) {
+      if (!task?.taskCode) continue
+      for (const conv of conversations.value) {
+        let conversationChanged = false
+        for (const message of conv.messages || []) {
+          if (message.role !== 'assistant') continue
+          const matchesCode = message.videoTaskCode === task.taskCode || message.videoTask?.taskCode === task.taskCode
+          const matchesClient = !message.videoTaskCode && task.clientMessageId && message.id === task.clientMessageId
+          if (!matchesCode && !matchesClient) continue
+          const previous = message.videoTask || {}
+          const nextError = task.status === 'failed' ? (task.errorMessage || '视频生成失败') : null
+          const inputsChanged = attachVideoInputAssets(conv, message, task)
+          if (previous.status !== task.status || previous.detailStatus !== task.detailStatus ||
+              JSON.stringify(previous.inputAssets || []) !== JSON.stringify(task.inputAssets || []) ||
+              JSON.stringify(previous.results || []) !== JSON.stringify(task.results || []) ||
+              (message.errorMessage || null) !== nextError || inputsChanged) {
+            message.videoTaskCode = task.taskCode
+            message.videoTask = task
+            message.status = task.status || 'processing'
+            message.errorMessage = nextError
+            changed = true
+            conversationChanged = true
+          }
+        }
+        if (conversationChanged) touchConversation(conv)
+      }
+    }
+    if (changed) persist()
+    return changed
+  }
+
   function failAssistantForRecord(recordId, errorMessage) {
     errorMessage = friendlyGenerationError(errorMessage)
     let changed = false
@@ -642,7 +833,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       for (const msg of conv.messages) {
         if (msg.role !== 'assistant') continue
         if (!recordIdEquals(msg.recordId, recordId) && !recordIdEquals(msg.record?.id, recordId)) continue
-        if (resolveRecordStatus(msg.record || { status: msg.status }) === 'completed') continue
+        if (resolveGenerationStatus(msg.record || { status: msg.status }) === 'completed') continue
         msg.status = 'failed'
         msg.errorMessage = errorMessage || '生成失败'
         changed = true
@@ -666,8 +857,8 @@ export const useConversationsStore = defineStore('conversations', () => {
         const latest = byId.get(Number(id))
         if (!latest) continue
 
-        const nextStatus = resolveRecordStatus(latest)
-        const prevStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const nextStatus = resolveGenerationStatus(latest)
+        const prevStatus = resolveGenerationStatus(msg.record || { status: msg.status })
         const imageChanged = latest.imagePath !== msg.record?.imagePath ||
           !!latest.remoteImageAvailable !== !!msg.record?.remoteImageAvailable
         const sourceMissing = !!latest.sourceImagePath && !messageSourceImageForAssistant(conv, msg)
@@ -687,7 +878,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         const msg = conv.messages[i]
         if (msg.role !== 'assistant') continue
 
-        const currentStatus = resolveRecordStatus(msg.record || { status: msg.status })
+        const currentStatus = resolveGenerationStatus(msg.record || { status: msg.status })
         const needsRecovered = currentStatus === 'processing' ||
           !(msg.record?.imagePath || msg.record?.imageUrl || msg.record?.remoteImageAvailable)
         if (!needsRecovered) continue
@@ -700,7 +891,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           .filter(record =>
             record?.id != null &&
             canRecoverRecordForMessage(record, conv, msg, userMsg) &&
-            resolveRecordStatus(record) === 'completed' &&
+            resolveGenerationStatus(record) === 'completed' &&
             !!(record.imagePath || record.imageUrl || record.remoteImageAvailable)
           )
           .sort((a, b) =>
@@ -712,7 +903,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (!latest) continue
 
         msg.recordId = latest.id
-        msg.status = resolveRecordStatus(latest)
+        msg.status = resolveGenerationStatus(latest)
         msg.errorMessage = msg.status === 'completed'
           ? null
           : (latest.errorMessage ? friendlyGenerationError(latest.errorMessage, latest) : null)
@@ -739,6 +930,20 @@ export const useConversationsStore = defineStore('conversations', () => {
     persist()
   }
 
+  function failAssistantMessage(messageId, errorMessage) {
+    if (!messageId) return false
+    for (const conv of conversations.value) {
+      const message = (conv.messages || []).find(item => item.id === messageId && item.role === 'assistant')
+      if (!message) continue
+      message.status = 'failed'
+      message.errorMessage = friendlyGenerationError(errorMessage) || '生成失败'
+      touchConversation(conv)
+      persist()
+      return true
+    }
+    return false
+  }
+
   function importFromHistory(history, keyCode) {
     bindKeyCode(keyCode)
     if (conversations.value.length > 0 || !history?.length) return
@@ -752,7 +957,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         sourceImage: null,
         createdAt: new Date(record.createdAt || Date.now()).getTime()
       }
-      const status = resolveRecordStatus(record)
+      const status = resolveGenerationStatus(record)
       const errorMessage = status === 'completed'
         ? null
         : (record.errorMessage ? friendlyGenerationError(record.errorMessage, record) : null)
@@ -806,6 +1011,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     resetSession,
     createConversation,
     selectConversation,
+    activateGenerationArea,
     renameConversation,
     setConversationType,
     deleteConversation,
@@ -814,9 +1020,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     addExchange,
     syncRecord,
     attachRecordToMessage,
+    attachVideoTaskToMessage,
     failLatestAssistant,
+    failAssistantMessage,
     failAssistantForRecord,
     syncFromHistoryRecords,
+    syncVideoTask,
+    syncVideoTasks,
     importFromHistory,
     imageUrlForMessage,
     setPendingPrompt,

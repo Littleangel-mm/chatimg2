@@ -1,5 +1,6 @@
 package com.example.chatimg2.service;
 
+import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.GenerationRecord;
 import com.example.chatimg2.repository.GenerationRecordRepository;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -19,77 +21,78 @@ public class ImageResultDeliveryService {
     private final GenerationRecordService recordService;
     private final GenerationRecordRepository recordRepository;
     private final DistributedLockService distributedLockService;
+    private final ImageStorageConfig storageConfig;
     private final AuthService authService;
 
     @Value("${app.image.backup.lock-ttl-ms:600000}")
     private long backupLockTtlMs;
 
-    public boolean saveLocal(Integer recordId, String remoteImageUrl, String taskCode, String ownerFolder) {
-        String lockKey = "image-backup:record:" + recordId;
-        if (!distributedLockService.acquire(lockKey, Duration.ofMillis(backupLockTtlMs))) {
-            log.debug("Image backup already running: recordId={}", recordId);
-            return false;
-        }
-        try {
-            GenerationRecord current = recordRepository.findById(recordId).orElse(null);
-            if (current == null) {
-                return false;
-            }
-            if (current.getImagePath() != null && !current.getImagePath().isBlank()) {
-                return true;
-            }
-            String resultUrl = remoteImageUrl == null || remoteImageUrl.isBlank()
-                    ? current.getRemoteImageUrl()
-                    : remoteImageUrl;
-            if (resultUrl == null || resultUrl.isBlank()) {
-                return false;
-            }
-
-            ImageBackupService.BackupResult backup = imageBackupService.backupSync(
-                    resultUrl,
-                    taskCode == null || taskCode.isBlank() ? current.getTaskCode() : taskCode,
-                    ownerFolder);
-            recordService.markCompleted(recordId, backup.imagePath());
-            return true;
-        } finally {
-            distributedLockService.release(lockKey);
-        }
-    }
-
     @Async("imageBackupExecutor")
     public void retrySavedRemoteImage(Integer recordId) {
-        GenerationRecord record = recordRepository.findById(recordId).orElse(null);
-        if (record == null || !record.isRemoteImageAvailable()) {
+        String lockKey = "image-backup:record:" + recordId;
+        Optional<DistributedLockService.LockToken> lock;
+        String taskCode = "unknown";
+        try {
+            lock = distributedLockService.tryAcquire(lockKey, Duration.ofMillis(backupLockTtlMs));
+        } catch (Exception e) {
+            log.warn("Remote image backup lock failed: recordId={}, reason={}", recordId, e.getMessage());
             return;
         }
-        String ownerFolder = record.getUserEmail() == null || record.getUserEmail().isBlank()
-                ? null
-                : authService.safeEmailFolder(record.getUserEmail());
+        if (lock.isEmpty()) {
+            return;
+        }
         try {
-            boolean saved = saveLocal(recordId, record.getRemoteImageUrl(), record.getTaskCode(), ownerFolder);
-            if (saved) {
-                log.info("Remote image backup completed: recordId={}, taskCode={}", recordId, record.getTaskCode());
+            GenerationRecord record = recordRepository.findById(recordId).orElse(null);
+            if (!requiresLocalBackup(record)) {
+                return;
+            }
+            taskCode = record.getTaskCode();
+            String ownerFolder = ownerFolder(record);
+            ImageBackupService.BackupResult backup = imageBackupService.backupSync(
+                    record.getRemoteImageUrl(), record.getTaskCode(), ownerFolder);
+            if (recordService.markLocalImageAvailable(recordId, backup.imagePath())) {
+                log.info("Remote image backup completed: recordId={}, taskCode={}",
+                        recordId, record.getTaskCode());
             }
         } catch (Exception e) {
-            log.warn("Remote image backup still unavailable: recordId={}, taskCode={}, reason={}",
-                    recordId, record.getTaskCode(), e.getMessage());
+            log.warn("Remote image backup unavailable: recordId={}, taskCode={}, reason={}",
+                    recordId, taskCode, e.getMessage());
+        } finally {
+            distributedLockService.release(lock.orElse(null));
         }
     }
 
     public void saveBrowserDeliveredImage(Integer recordId, byte[] imageBytes) {
         GenerationRecord record = recordRepository.findById(recordId)
                 .orElseThrow(() -> new IllegalArgumentException("Generation record not found"));
-        if (record.getImagePath() != null && !record.getImagePath().isBlank()) {
+        if (hasReadableLocalImage(record)) {
             return;
         }
-        if (!record.isRemoteImageAvailable()) {
+        if (!GenerationState.isCompleted(record.getStatus()) || !record.isRemoteImageAvailable()) {
             throw new IllegalStateException("Remote image result is not available");
         }
-        String ownerFolder = record.getUserEmail() == null || record.getUserEmail().isBlank()
+        ImageBackupService.BackupResult backup = imageBackupService.backupBytes(
+                imageBytes, record.getTaskCode(), ownerFolder(record));
+        recordService.markLocalImageAvailable(recordId, backup.imagePath());
+    }
+
+    private boolean requiresLocalBackup(GenerationRecord record) {
+        return record != null
+                && GenerationState.isCompleted(record.getStatus())
+                && record.isRemoteImageAvailable()
+                && !hasReadableLocalImage(record);
+    }
+
+    private boolean hasReadableLocalImage(GenerationRecord record) {
+        return record != null
+                && record.getImagePath() != null
+                && !record.getImagePath().isBlank()
+                && storageConfig.resolveReadableImageFile(record.getImagePath()) != null;
+    }
+
+    private String ownerFolder(GenerationRecord record) {
+        return record.getUserEmail() == null || record.getUserEmail().isBlank()
                 ? null
                 : authService.safeEmailFolder(record.getUserEmail());
-        ImageBackupService.BackupResult backup = imageBackupService.backupBytes(
-                imageBytes, record.getTaskCode(), ownerFolder);
-        recordService.markCompleted(recordId, backup.imagePath());
     }
 }

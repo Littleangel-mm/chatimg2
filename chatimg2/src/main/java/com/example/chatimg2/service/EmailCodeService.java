@@ -8,6 +8,7 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -72,7 +73,7 @@ public class EmailCodeService {
         mailSender.send(message);
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void verify(String email, String scene, String code) {
         String normalized = authService.normalizeEmail(email);
         String normalizedScene = normalizeScene(scene);
@@ -81,7 +82,7 @@ public class EmailCodeService {
         }
 
         EmailVerificationCode entity = codeRepository
-                .findTopByEmailAndSceneAndUsedFalseOrderByCreatedAtDesc(normalized, normalizedScene)
+                .findLatestUnusedForUpdate(normalized, normalizedScene)
                 .orElseThrow(() -> new RuntimeException("验证码不存在或已过期"));
 
         if (entity.getExpiresAt().isBefore(LocalDateTime.now())) {

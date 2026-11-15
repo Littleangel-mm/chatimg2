@@ -3,6 +3,7 @@ package com.example.chatimg2.controller;
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.entity.GenerationRecord;
 import com.example.chatimg2.repository.GenerationRecordRepository;
+import com.example.chatimg2.service.GenerationRecordViewService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -26,16 +27,18 @@ public class ImageController {
 
     private final ImageStorageConfig storageConfig;
     private final GenerationRecordRepository recordRepository;
+    private final GenerationRecordViewService recordViewService;
 
     @GetMapping("/results/{taskCode}")
-    public ResponseEntity<Void> getGeneratedResult(@PathVariable String taskCode) {
+    public ResponseEntity<Void> getGeneratedResult(@PathVariable String taskCode, HttpServletRequest request) {
         GenerationRecord record = recordRepository.findByTaskCode(taskCode).orElse(null);
         if (record == null) {
             return ResponseEntity.notFound().build();
         }
 
-        String localPath = record.getImagePath();
-        if (localPath != null && !localPath.isBlank()) {
+        String localPath = recordViewService.resolveImagePath(record);
+        if (localPath != null && !localPath.isBlank()
+                && storageConfig.resolveReadableImageFile(localPath) != null) {
             URI localUri = URI.create("/img/" + encodeRelativePath(localPath));
             return ResponseEntity.status(HttpStatus.FOUND)
                     .location(localUri)
@@ -54,8 +57,8 @@ public class ImageController {
     }
 
     @GetMapping("/{filename}")
-    public ResponseEntity<Resource> getImage(@PathVariable String filename) {
-        return serveImage(filename);
+    public ResponseEntity<Resource> getImage(@PathVariable String filename, HttpServletRequest request) {
+        return serveImage(filename, request);
     }
 
     @GetMapping("/**")
@@ -65,10 +68,10 @@ public class ImageController {
         if (path.startsWith(prefix)) {
             path = path.substring(prefix.length());
         }
-        return serveImage(path);
+        return serveImage(path, request);
     }
 
-    private ResponseEntity<Resource> serveImage(String path) {
+    private ResponseEntity<Resource> serveImage(String path, HttpServletRequest request) {
         try {
             Path filePath = storageConfig.resolveReadableImageFile(path);
             if (filePath == null) {

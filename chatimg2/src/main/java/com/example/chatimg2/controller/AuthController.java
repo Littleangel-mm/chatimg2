@@ -11,8 +11,11 @@ import com.example.chatimg2.service.AuthPrincipal;
 import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.EmailCodeService;
 import com.example.chatimg2.service.KeyService;
+import com.example.chatimg2.service.PasswordService;
+import com.example.chatimg2.service.RegistrationService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
@@ -27,6 +30,8 @@ public class AuthController {
     private final UserAccountRepository userRepository;
     private final AdminService adminService;
     private final KeyService keyService;
+    private final PasswordService passwordService;
+    private final RegistrationService registrationService;
 
     @PostMapping("/email-code")
     public ApiResponse<Void> sendEmailCode(@RequestBody AuthRequest request, HttpServletRequest servletRequest) {
@@ -52,14 +57,15 @@ public class AuthController {
             if (request.getPassword() == null || request.getPassword().length() < 6) {
                 return ApiResponse.error(400, "密码至少 6 位");
             }
+            if (!passwordService.isBcryptLengthSupported(request.getPassword())) {
+                return ApiResponse.error(400, "密码不能超过 72 个字节");
+            }
 
-            emailCodeService.verify(email, "REGISTER", request.getCode());
-            UserAccount user = new UserAccount();
-            user.setEmail(email);
-            user.setUsername(email.substring(0, email.indexOf('@')));
-            user.setPasswordHash(authService.sha256(email + ":" + request.getPassword()));
-            user = userRepository.save(user);
-            return ApiResponse.success("注册成功", authService.createUserSession(user));
+            AuthResponse response = registrationService.register(
+                    email, request.getPassword(), request.getCode());
+            return ApiResponse.success("注册成功", response);
+        } catch (DataIntegrityViolationException e) {
+            return ApiResponse.error(400, "该邮箱已注册，请直接登录");
         } catch (RuntimeException e) {
             return ApiResponse.error(400, e.getMessage());
         }
@@ -76,9 +82,13 @@ public class AuthController {
                 if (request.getPassword() == null || request.getPassword().isBlank()) {
                     return ApiResponse.error(400, "请输入密码");
                 }
-                String expected = authService.sha256(email + ":" + request.getPassword());
-                if (!expected.equals(user.getPasswordHash())) {
+                if (!passwordService.matchesUser(email, request.getPassword(), user.getPasswordHash())) {
                     return ApiResponse.error(401, "邮箱或密码错误");
+                }
+                if (passwordService.needsUpgrade(user.getPasswordHash())
+                        && passwordService.isBcryptLengthSupported(request.getPassword())) {
+                    user.setPasswordHash(passwordService.encode(request.getPassword()));
+                    user = userRepository.save(user);
                 }
                 user = keyService.syncUserCredits(user);
                 return ApiResponse.success("登录成功", authService.createUserSession(user));

@@ -6,6 +6,7 @@ import com.example.chatimg2.entity.InspirationPrompt;
 import com.example.chatimg2.service.InspirationCrawlerService;
 import com.example.chatimg2.service.InspirationMediaService;
 import com.example.chatimg2.service.InspirationService;
+import com.example.chatimg2.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,6 +26,7 @@ public class InspirationController {
     private final InspirationService inspirationService;
     private final InspirationCrawlerService crawlerService;
     private final InspirationMediaService mediaService;
+    private final AuthService authService;
 
     /** 用户端：灵感画廊分页列表 */
     @GetMapping("/inspiration")
@@ -59,7 +61,9 @@ public class InspirationController {
 
     /** 管理端：触发爬取（异步执行） */
     @PostMapping("/admin/inspiration/crawl")
-    public ApiResponse<Map<String, Object>> crawl(@RequestParam(required = false) String mediaType) {
+    public ApiResponse<Map<String, Object>> crawl(@RequestParam(required = false) String mediaType,
+                                                   HttpServletRequest request) {
+        authService.requireAdmin(request);
         boolean started = crawlerService.startAsync(mediaType);
         Map<String, Object> data = new HashMap<>();
         data.put("started", started);
@@ -71,7 +75,8 @@ public class InspirationController {
 
     /** 管理端：爬取状态与库存数量 */
     @GetMapping("/admin/inspiration/status")
-    public ApiResponse<Map<String, Object>> status() {
+    public ApiResponse<Map<String, Object>> status(HttpServletRequest request) {
+        authService.requireAdmin(request);
         Map<String, Object> data = new HashMap<>();
         data.put("running", crawlerService.isRunning());
         data.put("lastFinishedAt", crawlerService.getLastFinishedAt());

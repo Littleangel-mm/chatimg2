@@ -76,6 +76,13 @@ public class AuthService {
         }
     }
 
+    @Transactional
+    public void revokeUserSessions(Integer userId) {
+        if (userId != null) {
+            sessionRepository.deleteByUserId(userId);
+        }
+    }
+
     public String normalizeEmail(String email) {
         return email == null ? "" : email.trim().toLowerCase();
     }

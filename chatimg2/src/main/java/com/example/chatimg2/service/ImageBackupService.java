@@ -2,14 +2,13 @@ package com.example.chatimg2.service;
 
 import com.example.chatimg2.config.ImageStorageConfig;
 import com.example.chatimg2.exception.ImageDownloadException;
-import com.example.chatimg2.repository.GenerationRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -29,16 +28,32 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class ImageBackupService {
 
-    private final GenerationRecordRepository recordRepository;
     private final ImageStorageConfig storageConfig;
 
     @Value("${app.image.download.max-bytes:20971520}")
     private long maxImageBytes;
 
-    private final OkHttpClient httpClient = new OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .build();
+    @Value("${app.image.download.max-attempts:3}")
+    private int maxDownloadAttempts;
+
+    @Value("${app.image.download.retry-delay-ms:1000}")
+    private long downloadRetryDelayMs;
+
+    @Value("${app.image.download.connect-timeout-ms:30000}")
+    private long downloadConnectTimeoutMs;
+
+    @Value("${app.image.download.read-timeout-ms:120000}")
+    private long downloadReadTimeoutMs;
+
+    private OkHttpClient httpClient;
+
+    @PostConstruct
+    void initHttpClient() {
+        httpClient = new OkHttpClient.Builder()
+                .connectTimeout(Math.max(1000L, downloadConnectTimeoutMs), TimeUnit.MILLISECONDS)
+                .readTimeout(Math.max(1000L, downloadReadTimeoutMs), TimeUnit.MILLISECONDS)
+                .build();
+    }
 
     public record BackupResult(String imagePath) {}
 
@@ -47,6 +62,9 @@ public class ImageBackupService {
         Path tempPath = tempPath(filePath);
         try {
             byte[] bytes = Base64.getDecoder().decode(b64);
+            if (!ImageContentSupport.isSupported(bytes)) {
+                throw new ImageDownloadException("Base64 result is not a supported image");
+            }
             validateImageSize(bytes.length);
             Files.write(tempPath, bytes);
             moveCompletedFile(tempPath, filePath);
@@ -55,10 +73,6 @@ public class ImageBackupService {
             deleteQuietly(tempPath);
             throw new ImageDownloadException("保存 Base64 图片失败: " + e.getMessage(), e);
         }
-    }
-
-    public BackupResult backupSync(String imageUrl, String taskCode) {
-        return backupSync(imageUrl, taskCode, null);
     }
 
     public BackupResult backupSync(String imageUrl, String taskCode, String ownerFolder) {
@@ -70,7 +84,7 @@ public class ImageBackupService {
     }
 
     public BackupResult backupBytes(byte[] imageBytes, String taskCode, String ownerFolder) {
-        if (!isSupportedImage(imageBytes)) {
+        if (!ImageContentSupport.isSupported(imageBytes)) {
             throw new ImageDownloadException("Invalid generated image content");
         }
         validateImageSize(imageBytes.length);
@@ -85,19 +99,6 @@ public class ImageBackupService {
         } catch (IOException e) {
             deleteQuietly(tempPath);
             throw new ImageDownloadException("Failed to save browser-delivered image", e);
-        }
-    }
-
-    @Async
-    public void backupAsync(Integer recordId, String imageUrl, String taskCode) {
-        try {
-            BackupResult result = backupSync(imageUrl, taskCode);
-            recordRepository.findById(recordId).ifPresent(record -> {
-                record.setImagePath(result.imagePath());
-                recordRepository.save(record);
-            });
-        } catch (Exception e) {
-            log.warn("Async backup failed for record {}: {}", recordId, e.getMessage());
         }
     }
 
@@ -185,22 +186,11 @@ public class ImageBackupService {
                 : ownerFolder + "/" + taskCode + ".png";
     }
 
-    private boolean isSupportedImage(byte[] bytes) {
-        if (bytes == null || bytes.length < 12) {
-            return false;
-        }
-        boolean jpeg = (bytes[0] & 0xff) == 0xff && (bytes[1] & 0xff) == 0xd8;
-        boolean png = (bytes[0] & 0xff) == 0x89
-                && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47;
-        boolean webp = bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
-                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
-        return jpeg || png || webp;
-    }
-
     private void downloadToImgDir(String imageUrl, Path target) {
         ImageDownloadException lastError = null;
         String resultHost = resultHost(imageUrl);
-        for (int attempt = 1; attempt <= 3; attempt++) {
+        int attempts = Math.max(1, maxDownloadAttempts);
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             Path tempPath = tempPath(target);
             try {
                 Request request = new Request.Builder().url(imageUrl).build();
@@ -213,6 +203,7 @@ public class ImageBackupService {
                         try (InputStream is = response.body().byteStream()) {
                             copyWithLimit(is, tempPath);
                         }
+                        validateImageFile(tempPath);
                         moveCompletedFile(tempPath, target);
                         return;
                     }
@@ -220,6 +211,8 @@ public class ImageBackupService {
                     if (!isRetryableDownloadStatus(response.code())) {
                         throw lastError;
                     }
+                    log.warn("Download attempt {}/{} failed: host={}, status={}",
+                            attempt, attempts, resultHost, response.code());
                 }
             } catch (ImageDownloadException e) {
                 deleteQuietly(tempPath);
@@ -227,17 +220,32 @@ public class ImageBackupService {
                 if (e.getCause() == null) {
                     throw e;
                 }
-                log.warn("Download attempt {}/3 failed: host={}, reason={}", attempt, resultHost, e.getMessage());
+                log.warn("Download attempt {}/{} failed: host={}, reason={}",
+                        attempt, attempts, resultHost, e.getMessage());
             } catch (IOException e) {
                 deleteQuietly(tempPath);
                 lastError = new ImageDownloadException("下载图片网络异常: " + e.getMessage(), e);
-                log.warn("Download attempt {}/3 failed: host={}, reason={}", attempt, resultHost, e.getMessage());
+                log.warn("Download attempt {}/{} failed: host={}, reason={}",
+                        attempt, attempts, resultHost, e.getMessage());
+            }
+            if (attempt < attempts) {
+                sleepBeforeDownloadRetry(attempt);
             }
         }
         if (lastError != null) {
             throw new ImageDownloadException("图片下载重试后仍失败", lastError);
         }
         throw new ImageDownloadException("图片下载失败，未获得有效响应");
+    }
+
+    private void sleepBeforeDownloadRetry(int attempt) {
+        long delay = Math.max(0, downloadRetryDelayMs) * attempt;
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ImageDownloadException("图片下载重试被中断", e);
+        }
     }
 
     private String resultHost(String imageUrl) {
@@ -268,6 +276,16 @@ public class ImageBackupService {
         }
         if (size > maxImageBytes) {
             throw new ImageDownloadException("图片超过允许大小: " + size + " bytes");
+        }
+    }
+
+    private void validateImageFile(Path path) throws IOException {
+        byte[] signature;
+        try (InputStream input = Files.newInputStream(path)) {
+            signature = input.readNBytes(12);
+        }
+        if (!ImageContentSupport.isSupported(signature)) {
+            throw new IOException("下载结果不是支持的图片格式");
         }
     }
 

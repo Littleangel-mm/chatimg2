@@ -3,6 +3,7 @@
 export const routeChunks = {
   home: () => import('../views/HomeView.vue'),
   inspiration: () => import('../views/InspirationView.vue'),
+  video: () => import('../views/VideoView.vue'),
   login: () => import('../views/AuthLogin.vue'),
   register: () => import('../views/AuthRegister.vue'),
   'admin-login': () => import('../views/admin/AdminLogin.vue'),

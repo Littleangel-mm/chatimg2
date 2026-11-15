@@ -16,12 +16,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -30,7 +30,6 @@ public class ImageApiClient {
 
     private final ImageBackupService imageBackupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String AUTO_IMAGE_SIZE = "auto";
     private static final String DEFAULT_IMAGE_SIZE = "1024x1024";
     private static final String PORTRAIT_IMAGE_SIZE = "1024x1536";
     private static final String LANDSCAPE_IMAGE_SIZE = "1536x1024";
@@ -44,8 +43,8 @@ public class ImageApiClient {
     @Value("${app.api.model.text2img:gpt-image-2}")
     private String defaultText2imgModel;
 
-    @Value("${app.api.image.size:auto}")
-    private String configuredImageSize;
+    @Value("${app.api.image.multi-image-field:image[]}")
+    private String multiImageField = "image[]";
 
     @Value("${app.api.poll.initial-delay-ms:5000}")
     private long pollInitialDelayMs;
@@ -70,9 +69,6 @@ public class ImageApiClient {
 
     @Value("${app.api.submit.retry-delay-ms:3000}")
     private long submitRetryDelayMs;
-
-    @Value("${app.api.compat.maitokens-www-to-wcf:true}")
-    private boolean maitokensWwwToWcf;
 
     private static final Set<String> COMPLETED_STATUSES = Set.of(
             "completed", "success", "succeeded", "done", "finished"
@@ -104,6 +100,7 @@ public class ImageApiClient {
     }
 
     public String textToImage(String prompt, String requestedModel, List<String> fallbacks) {
+        validateConfiguration();
         ApiCallException lastError = null;
         List<String> models = buildText2imgModels(requestedModel, fallbacks);
         if (models.isEmpty()) {
@@ -111,46 +108,35 @@ public class ImageApiClient {
         }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
-            List<String> sizes = buildSizeAttempts(resolveImageSizeFromPrompt(prompt));
-            for (int sizeIndex = 0; sizeIndex < sizes.size(); sizeIndex++) {
-                String size = sizes.get(sizeIndex);
-                try {
-                    var body = new java.util.HashMap<String, Object>();
-                    body.put("model", model);
-                    body.put("prompt", prompt);
-                    body.put("n", 1);
-                    if (size != null && !size.isBlank()) {
-                        body.put("size", size);
-                    }
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    Request request = new Request.Builder()
-                            .url(getApiBaseUrl() + "/v1/images/generations")
-                            .addHeader("Authorization", "Bearer " + apiKey)
-                            .addHeader("Content-Type", "application/json")
-                            .addHeader("Idempotency-Key", UUID.randomUUID().toString())
-                            .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
-                            .build();
+            try {
+                String size = resolveRequestedSize(prompt);
+                var body = new java.util.HashMap<String, Object>();
+                body.put("model", model);
+                body.put("prompt", prompt);
+                body.put("n", 1);
+                body.put("size", size);
+                body.put("quality", "medium");
+                String jsonBody = objectMapper.writeValueAsString(body);
+                Request request = new Request.Builder()
+                        .url(getApiBaseUrl() + "/v1/images/generations")
+                        .addHeader("Authorization", "Bearer " + apiKey)
+                        .addHeader("Content-Type", "application/json")
+                        .post(RequestBody.create(jsonBody, MediaType.parse("application/json")))
+                        .build();
 
-                    log.info("Text2img trying model: {}, size={}", model, size == null ? "omitted" : size);
-                    return resolveImageFromSubmit(request);
-                } catch (ApiCallException e) {
-                    lastError = e;
-                    boolean hasNextSize = sizeIndex < sizes.size() - 1;
-                    if (hasNextSize && shouldRetryText2imgWithNextSize(e)) {
-                        log.warn("Text2img size {} failed, trying next size option: {}",
-                                size == null ? "omitted" : size, e.getMessage());
-                        continue;
-                    }
-                    boolean hasNext = i < models.size() - 1;
-                    if (isModelNotFound(e) && hasNext) {
-                        log.warn("Model {} not available, trying next...", model);
-                        break;
-                    }
-                    throw e;
-                } catch (JsonProcessingException e) {
-                    throw new ApiCallException(null, "request_serialization_error", "invalid_request_body",
-                            false, "文生图请求序列化失败", "生图请求处理失败，请稍后重试", e);
+                log.info("Text2img trying model: {}, size={}, quality=medium", model, size);
+                return resolveImageFromSubmit(request);
+            } catch (ApiCallException e) {
+                lastError = e;
+                boolean hasNext = i < models.size() - 1;
+                if (isModelNotFound(e) && hasNext) {
+                    log.warn("Model {} not available, trying next...", model);
+                    continue;
                 }
+                throw e;
+            } catch (JsonProcessingException e) {
+                throw new ApiCallException(null, "request_serialization_error", "invalid_request_body",
+                        false, "文生图请求序列化失败", "生图请求处理失败，请稍后重试", e);
             }
         }
         if (lastError != null) {
@@ -159,25 +145,21 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的文生图模型");
     }
 
-    public String imageEdit(String prompt, byte[] imageBytes, String model) {
-        return imageEdit(prompt, imageBytes, "image/png", "source.png", model, List.of());
+    public String imageEdit(String prompt, byte[] imageBytes, String requestedModel) {
+        return imageEdit(prompt, List.of(imageBytes), requestedModel);
     }
 
-    public String imageEdit(String prompt, byte[] imageBytes, String requestedModel, List<String> fallbacks) {
-        return imageEdit(prompt, imageBytes, "image/png", "source.png", requestedModel, fallbacks);
-    }
-
-    public String imageEdit(String prompt, byte[] imageBytes, String imageMediaType, String fileName,
-                            String requestedModel, List<String> fallbacks) {
+    public String imageEdit(String prompt, List<byte[]> imageBytes, String requestedModel) {
+        validateConfiguration();
         ApiCallException lastError = null;
-        List<String> models = buildImageEditModels(requestedModel, fallbacks);
+        List<String> models = buildImageEditModels(requestedModel);
         if (models.isEmpty()) {
             throw new BusinessException("IMAGE_MODEL_MISSING", "未配置可用的图生图模型");
         }
         for (int i = 0; i < models.size(); i++) {
             String model = models.get(i);
             try {
-                return submitImageEdit(prompt, imageBytes, imageMediaType, fileName, model);
+                return submitImageEdit(prompt, imageBytes, model);
             } catch (ApiCallException e) {
                 lastError = e;
                 boolean hasNext = i < models.size() - 1;
@@ -194,15 +176,24 @@ public class ImageApiClient {
         throw new BusinessException("IMAGE_MODEL_UNAVAILABLE", "当前没有可用的图生图模型");
     }
 
-    private String submitImageEdit(String prompt, byte[] imageBytes, String imageMediaType,
-                                   String fileName, String model) {
-        String mediaType = imageMediaType == null || imageMediaType.isBlank() ? "image/png" : imageMediaType;
-        String uploadName = fileName == null || fileName.isBlank() ? "source.png" : fileName;
-        String size = resolveImageSizeFromPrompt(prompt);
-        RequestBody fileBody = RequestBody.create(imageBytes, MediaType.parse(mediaType));
-        MultipartBody body = new MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("image", uploadName, fileBody)
+    private String submitImageEdit(String prompt, List<byte[]> imageBytes, String model) {
+        String size = resolveRequestedSize(prompt);
+        if (imageBytes == null || imageBytes.isEmpty() || imageBytes.size() > 4) {
+            throw new BusinessException("INVALID_SOURCE_IMAGE", "图生图支持 1 至 4 张参考图片");
+        }
+        MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM);
+        for (int index = 0; index < imageBytes.size(); index++) {
+            byte[] bytes = imageBytes.get(index);
+            String mediaType = ImageContentSupport.detectMediaType(bytes);
+            if (mediaType == null) throw new BusinessException("INVALID_SOURCE_IMAGE", "参考图片格式无效，请重新上传 JPEG、PNG 或 WebP 图片");
+            String filename = imageBytes.size() == 1 ? "source." : "source-" + index + ".";
+            bodyBuilder.addFormDataPart(imageBytes.size() == 1 ? "image" : multiImageField,
+                    filename + ImageContentSupport.extension(mediaType),
+                    RequestBody.create(bytes, MediaType.parse(mediaType)));
+        }
+        // Preserve the historical single-image multipart order for provider compatibility.
+        MultipartBody body = bodyBuilder
                 .addFormDataPart("prompt", prompt)
                 .addFormDataPart("model", model)
                 .addFormDataPart("n", "1")
@@ -212,11 +203,13 @@ public class ImageApiClient {
         Request request = new Request.Builder()
                 .url(getApiBaseUrl() + "/v1/images/edits")
                 .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Idempotency-Key", UUID.randomUUID().toString())
                 .post(body)
                 .build();
 
-        log.info("Img2img using model: {}, mediaType={}, size={}", model, mediaType, size);
+        log.info("Img2img using model: {}, imageCount={}, size={}, host={}, path={}, imageField={}, imageBytes={}",
+                model, imageBytes.size(), size, request.url().host(), request.url().encodedPath(),
+                imageBytes.size() == 1 ? "image" : multiImageField,
+                imageBytes.stream().mapToLong(bytes -> bytes.length).sum());
         return resolveImageFromSubmit(request);
     }
 
@@ -237,16 +230,10 @@ public class ImageApiClient {
         return new ArrayList<>(models);
     }
 
-    private List<String> buildImageEditModels(String requestedModel, List<String> fallbacks) {
+    private List<String> buildImageEditModels(String requestedModel) {
         LinkedHashSet<String> models = new LinkedHashSet<>();
         if (isGptImageModel(requestedModel)) {
             models.add(requestedModel.trim());
-        }
-        if (fallbacks != null) {
-            fallbacks.stream()
-                    .filter(this::isGptImageModel)
-                    .map(String::trim)
-                    .forEach(models::add);
         }
         return new ArrayList<>(models);
     }
@@ -255,53 +242,26 @@ public class ImageApiClient {
         return model != null && model.trim().startsWith("gpt-image");
     }
 
-    private String resolveImageSizeFromPrompt(String prompt) {
-        String text = normalizePrompt(prompt);
-        if (containsAny(text, "9:16", "9/16", "916", "1080x1920", "720x1280", "竖屏", "竖版", "竖图", "手机壁纸", "portrait", "vertical")) {
+    private String resolveRequestedSize(String prompt) {
+        String normalized = (prompt == null ? "" : prompt)
+                .toLowerCase(java.util.Locale.ROOT)
+                .replace('：', ':')
+                .replace('∶', ':')
+                .replace('／', '/')
+                .replace('×', 'x')
+                .replaceAll("\\s+", "");
+        if (containsAny(normalized, "9:16", "9/16", "3:4", "3/4", "竖屏", "竖版", "竖图", "portrait", "vertical")) {
             return PORTRAIT_IMAGE_SIZE;
         }
-        if (containsAny(text, "16:9", "16/9", "169", "1920x1080", "1280x720", "横屏", "横版", "横图", "landscape", "horizontal", "wide")) {
+        if (containsAny(normalized, "16:9", "16/9", "4:3", "4/3", "横屏", "横版", "横图", "landscape", "horizontal")) {
             return LANDSCAPE_IMAGE_SIZE;
-        }
-        if (containsAny(text, "1:1", "1/1", "方图", "方形", "square")) {
-            return DEFAULT_IMAGE_SIZE;
         }
         return DEFAULT_IMAGE_SIZE;
     }
 
-    private List<String> buildSizeAttempts(String preferredSize) {
-        LinkedHashSet<String> sizes = new LinkedHashSet<>();
-        if (preferredSize != null && !preferredSize.isBlank()) {
-            sizes.add(preferredSize.trim());
-        }
-        if (configuredImageSize != null && !configuredImageSize.isBlank()) {
-            sizes.add(configuredImageSize.trim());
-        }
-        sizes.add(AUTO_IMAGE_SIZE);
-        sizes.add(null);
-        sizes.add(DEFAULT_IMAGE_SIZE);
-        return new ArrayList<>(sizes);
-    }
-
-    private boolean shouldRetryText2imgWithNextSize(ApiCallException error) {
-        Integer status = error.getHttpStatus();
-        if (status == null) {
-            return false;
-        }
-        return ImageApiErrorClassifier.isSizeError(status, toErrorDetails(error));
-    }
-
-    private String normalizePrompt(String prompt) {
-        return (prompt == null ? "" : prompt)
-                .toLowerCase(Locale.ROOT)
-                .replace('\uff1a', ':')
-                .replace('\u00d7', 'x')
-                .replace('*', 'x');
-    }
-
-    private boolean containsAny(String text, String... values) {
-        for (String value : values) {
-            if (text.contains(value)) {
+    private boolean containsAny(String text, String... candidates) {
+        for (String candidate : candidates) {
+            if (text.contains(candidate)) {
                 return true;
             }
         }
@@ -312,21 +272,27 @@ public class ImageApiClient {
         int attempts = Math.max(1, submitMaxAttempts);
         ApiCallException lastError = null;
         for (int attempt = 1; attempt <= attempts; attempt++) {
+            long startedAt = System.nanoTime();
             try (Response response = submitClient.newCall(request).execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
                 if (!response.isSuccessful()) {
                     ApiCallException error = createResponseException(response.code(), responseBody);
                     lastError = error;
                     if (error.isRetryable() && attempt < attempts) {
-                        log.warn("API submit failed transiently, retry {}/{} after HTTP {}: {}",
-                                attempt, attempts, response.code(), truncate(responseBody, 300));
+                        log.warn("Image API transient failure, retry {}/{}: status={}, type={}, code={}",
+                                attempt, attempts, response.code(),
+                                error.getApiErrorType(), error.getApiErrorCode());
                         sleepBeforeSubmitRetry();
                         continue;
                     }
-                    log.error("API call failed: {} - {}", response.code(), responseBody);
+                    log.error("Image API rejected request: status={}, type={}, code={}, retryable={}, host={}, path={}, elapsedMs={}",
+                            response.code(), error.getApiErrorType(), error.getApiErrorCode(), error.isRetryable(),
+                            request.url().host(), request.url().encodedPath(),
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
                     throw error;
                 }
-                log.debug("API submit response: {}", truncate(responseBody, 500));
+                log.debug("Image API submit succeeded: status={}, responseBytes={}",
+                        response.code(), responseBody.length());
                 JsonNode root;
                 try {
                     root = objectMapper.readTree(responseBody);
@@ -337,13 +303,14 @@ public class ImageApiClient {
                             "生图服务返回异常，请稍后重试", e);
                     lastError = error;
                     if (attempt < attempts) {
-                        log.warn("API returned invalid JSON, retry {}/{}: {}",
-                                attempt, attempts, truncate(responseBody, 300));
+                        log.warn("Image API returned invalid JSON, retry {}/{}: responseBytes={}",
+                                attempt, attempts, responseBody.length());
                         sleepBeforeSubmitRetry();
                         continue;
                     }
                     throw error;
                 }
+                logResultShape(root);
                 return resolveImageFromJson(root);
             } catch (java.net.SocketTimeoutException e) {
                 ApiCallException error = createTransportException("生图 API 请求超时", e);
@@ -421,8 +388,8 @@ public class ImageApiClient {
                     if (!error.isRetryable()) {
                         throw error;
                     }
-                    log.warn("Poll task {} attempt {} transient HTTP {}: {}",
-                            taskId, attempt, response.code(), truncate(body, 300));
+                    log.warn("Poll task {} attempt {} transient failure: status={}, type={}, code={}",
+                            taskId, attempt, response.code(), error.getApiErrorType(), error.getApiErrorCode());
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
@@ -431,8 +398,8 @@ public class ImageApiClient {
                 try {
                     root = objectMapper.readTree(body);
                 } catch (JsonProcessingException e) {
-                    log.warn("Poll task {} attempt {} returned invalid JSON: {}",
-                            taskId, attempt, truncate(body, 300));
+                    log.warn("Poll task {} attempt {} returned invalid JSON: responseBytes={}",
+                            taskId, attempt, body.length());
                     sleepQuietly(pollIntervalMs);
                     continue;
                 }
@@ -440,6 +407,7 @@ public class ImageApiClient {
                 log.info("Poll task {} attempt {} status={}", taskId, attempt, status);
 
                 if (status != null && isCompletedStatus(status)) {
+                    logResultShape(root);
                     String imageUrl = extractImageUrl(root);
                     if (imageUrl != null) {
                         return imageUrl;
@@ -483,8 +451,9 @@ public class ImageApiClient {
             if (fromResultImages != null) {
                 return fromResultImages;
             }
-            if (result.has("url")) {
-                return result.get("url").asText();
+            String fromResult = extractImageFromObject(result);
+            if (fromResult != null) {
+                return fromResult;
             }
         }
 
@@ -494,12 +463,13 @@ public class ImageApiClient {
             if (fromOutput != null) {
                 return fromOutput;
             }
-            if (output.has("url")) {
-                return output.get("url").asText();
+            String fromOutputObject = extractImageFromObject(output);
+            if (fromOutputObject != null) {
+                return fromOutputObject;
             }
         }
 
-        return null;
+        return extractImageFromObject(root);
     }
 
     private String extractImageFromDataArray(JsonNode array) {
@@ -510,13 +480,55 @@ public class ImageApiClient {
         if (first.isTextual()) {
             return first.asText();
         }
-        if (first.has("url")) {
-            return first.get("url").asText();
+        return extractImageFromObject(first);
+    }
+
+    private String extractImageFromObject(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return null;
         }
-        if (first.has("b64_json")) {
-            return imageBackupService.saveBase64(first.get("b64_json").asText());
+        if (hasText(node, "b64_json")) {
+            log.info("Image API result selected: source=b64_json");
+            return imageBackupService.saveBase64(node.get("b64_json").asText());
+        }
+        if (hasText(node, "url")) {
+            String url = node.get("url").asText();
+            log.info("Image API result selected: source=url, host={}", urlHost(url));
+            return url;
         }
         return null;
+    }
+
+    private boolean hasText(JsonNode node, String field) {
+        return node.has(field) && node.get(field).isTextual() && !node.get(field).asText().isBlank();
+    }
+
+    private void logResultShape(JsonNode root) {
+        JsonNode dataFirst = root.path("data").isArray() && !root.path("data").isEmpty()
+                ? root.path("data").get(0)
+                : null;
+        log.info("Image API result shape: rootFields={}, dataFirstFields={}, resultFields={}, outputFields={}",
+                fieldNames(root), fieldNames(dataFirst), fieldNames(root.get("result")), fieldNames(root.get("output")));
+    }
+
+    private List<String> fieldNames(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        Iterator<String> fields = node.fieldNames();
+        fields.forEachRemaining(names::add);
+        names.sort(String::compareTo);
+        return names;
+    }
+
+    private String urlHost(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host == null || host.isBlank() ? "unknown" : host;
+        } catch (IllegalArgumentException e) {
+            return "invalid";
+        }
     }
 
     private String extractTaskId(JsonNode root) {
@@ -620,7 +632,7 @@ public class ImageApiClient {
 
     private String getApiBaseUrl() {
         String baseUrl = apiUrl == null || apiUrl.isBlank()
-                ? "https://www.maitokens.com"
+                ? "https://www.maitokens.top/v1"
                 : apiUrl.trim();
         while (baseUrl.endsWith("/")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
@@ -628,17 +640,23 @@ public class ImageApiClient {
         if (baseUrl.endsWith("/v1")) {
             baseUrl = baseUrl.substring(0, baseUrl.length() - 3);
         }
-        if (maitokensWwwToWcf && baseUrl.equals("https://www.maitokens.com")) {
-            return "https://wcf.maitokens.com";
-        }
         return baseUrl;
     }
 
     private String sanitizeBaseUrl(String value) {
         if (value == null || value.isBlank()) {
-            return "https://www.maitokens.com";
+            return "https://www.maitokens.top/v1";
         }
         return value.trim();
+    }
+
+    private void validateConfiguration() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new BusinessException("IMAGE_API_KEY_MISSING", "生图服务尚未配置 API 密钥");
+        }
+        if (apiUrl == null || apiUrl.isBlank()) {
+            throw new BusinessException("IMAGE_API_URL_MISSING", "生图服务尚未配置 API 地址");
+        }
     }
 
     private void sleepQuietly(long millis) {

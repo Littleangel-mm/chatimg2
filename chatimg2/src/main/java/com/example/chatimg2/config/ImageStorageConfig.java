@@ -178,6 +178,21 @@ public class ImageStorageConfig {
         return null;
     }
 
+    public Path resolveSourceImageFile(String sourcePath) {
+        if (sourcePath == null || sourcePath.isBlank()) {
+            throw new IllegalArgumentException("Source image path must not be blank");
+        }
+        Path supplied = Paths.get(sourcePath);
+        Path file = supplied.isAbsolute()
+                ? supplied.toAbsolutePath().normalize()
+                : backupDir.resolve(supplied).toAbsolutePath().normalize();
+        Path root = backupDir.toAbsolutePath().normalize();
+        if (!file.startsWith(root) || !Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("Source image is outside the configured image directory");
+        }
+        return file;
+    }
+
     private Path findReadableFileByName(Path dir, String fileName) {
         Path root = dir.toAbsolutePath().normalize();
         if (!Files.isDirectory(root)) {

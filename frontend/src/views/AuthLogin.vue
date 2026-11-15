@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const userStore = useUserStore()
 
 const account = ref('')
 const password = ref('')
@@ -17,6 +19,7 @@ async function submit() {
       account: account.value.trim(),
       password: password.value
     })
+    userStore.logout()
     router.push(user.role === 'ADMIN' ? '/admin/keys' : '/')
   } catch (e) {
     error.value = e.response?.data?.message || e.message || '登录失败'

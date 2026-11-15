@@ -53,6 +53,9 @@ final class ImageApiErrorClassifier {
     }
 
     static boolean isRetryable(int httpStatus, ApiErrorDetails details) {
+        if (isTemporaryChannelUnavailable(httpStatus, details)) {
+            return true;
+        }
         if (isPermanent(details)) {
             return false;
         }
@@ -87,6 +90,9 @@ final class ImageApiErrorClassifier {
         if (isContentPolicyError(details)) {
             return details.message();
         }
+        if (isTemporaryChannelUnavailable(httpStatus, details)) {
+            return "生图服务暂时繁忙，请稍后重试";
+        }
         if (isModelNotFound(details)) {
             return "当前生图模型暂不可用，请联系管理员";
         }
@@ -100,6 +106,15 @@ final class ImageApiErrorClassifier {
             return "生图请求未通过，请调整提示词或图片后重试";
         }
         return "生图服务暂时繁忙，请稍后重试";
+    }
+
+    private static boolean isTemporaryChannelUnavailable(int httpStatus, ApiErrorDetails details) {
+        if (!TRANSIENT_HTTP_STATUSES.contains(httpStatus)) {
+            return false;
+        }
+        String combined = combined(details);
+        return combined.contains("no available channel")
+                || combined.contains("no channel available");
     }
 
     private static boolean isPermanent(ApiErrorDetails details) {

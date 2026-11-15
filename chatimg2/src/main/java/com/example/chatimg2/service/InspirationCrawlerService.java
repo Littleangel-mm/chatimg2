@@ -60,6 +60,9 @@ public class InspirationCrawlerService {
     @Value("${app.inspiration.download-images:true}")
     private boolean downloadImages;
 
+    @Value("${app.inspiration.max-media-bytes:524288000}")
+    private long maxMediaBytes;
+
     private volatile OkHttpClient httpClient;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -234,7 +237,8 @@ public class InspirationCrawlerService {
 
     /** 下载媒体到 img/upimg 或 img/upvideo，返回前端相对路径，失败返回 null */
     private String tryDownloadMedia(String remoteUrl, String externalId, String mediaType,
-                                    JsonNode item, int sortOrder) {
+                                     JsonNode item, int sortOrder) {
+        Path target = null;
         try {
             String folder = "video".equals(mediaType) ? "upvideo" : "upimg";
             Path dir = "video".equals(mediaType) ? storageConfig.getUpvideoDir() : storageConfig.getUpimgDir();
@@ -244,7 +248,7 @@ public class InspirationCrawlerService {
             String ext = extractExtension(normalizedUrl, mediaType);
             String baseName = resolveBaseName(externalId, remoteUrl);
             String fileName = baseName + ext;
-            Path target = dir.resolve(fileName);
+            target = dir.resolve(fileName);
 
             Request request = new Request.Builder()
                     .url(normalizedUrl)
@@ -260,6 +264,11 @@ public class InspirationCrawlerService {
                             normalizedUrl, response.code(), response.header("Content-Type"), body);
                     return null;
                 }
+                long contentLength = response.body().contentLength();
+                if (contentLength > maxMediaBytes) {
+                    log.warn("Inspiration media exceeds limit {} bytes: {}", maxMediaBytes, normalizedUrl);
+                    return null;
+                }
                 String contentType = response.header("Content-Type");
                 if (isTextResponse(contentType)) {
                     String body = truncate(response.body().string());
@@ -268,7 +277,7 @@ public class InspirationCrawlerService {
                     return null;
                 }
                 try (InputStream is = response.body().byteStream()) {
-                    Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
+                    copyWithLimit(is, target, maxMediaBytes);
                 }
             }
             String localPath = folder + "/" + fileName;
@@ -276,8 +285,29 @@ public class InspirationCrawlerService {
             log.info("Downloaded inspiration media: {} -> img/{}", remoteUrl, localPath);
             return localPath;
         } catch (Exception e) {
+            try {
+                Files.deleteIfExists(target);
+            } catch (IOException cleanupError) {
+                log.debug("Cleanup incomplete inspiration media failed {}: {}",
+                        target.getFileName(), cleanupError.getMessage());
+            }
             log.warn("Download inspiration media error {}: {}", remoteUrl, e.getMessage());
             return null;
+        }
+    }
+
+    private static void copyWithLimit(InputStream input, Path target, long maxBytes) throws IOException {
+        long total = 0;
+        byte[] buffer = new byte[8192];
+        try (var output = Files.newOutputStream(target)) {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > maxBytes) {
+                    throw new IOException("media exceeds configured size limit");
+                }
+                output.write(buffer, 0, read);
+            }
         }
     }
 
@@ -394,8 +424,6 @@ public class InspirationCrawlerService {
         }
         synchronized (this) {
             if (httpClient == null) {
-                System.setProperty("java.net.useSystemProxies", "true");
-                System.setProperty("java.net.preferIPv4Stack", "true");
                 Proxy effectiveProxy = resolveEffectiveProxy();
                 ProxySelector proxySelector = ProxySelector.getDefault();
                 OkHttpClient.Builder builder = new OkHttpClient.Builder()

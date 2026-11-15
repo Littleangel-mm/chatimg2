@@ -1,62 +1,16 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import api, { generateApi } from '../api'
+import api from '../api'
 import { useConversationsStore } from './conversations'
 import { useAuthStore } from './auth'
+import { resolveGenerationStatus } from '../utils/generation'
+import { dataUrlToFile } from '../utils/image'
 
 const CACHE_KEY = 'userCache'
-const POLL_INTERVAL_MS = 4000
-const POLL_MAX_ATTEMPTS = 900
-const RECOVERY_INTERVAL_MS = 5000
-const RECOVERY_MAX_ATTEMPTS = 36
-const POLICY_ADVICE_PREFIX = 'CONTENT_POLICY_ADVICE:'
-const LEGACY_POLICY_ADVICE_PREFIX = '内容安全提示：'
-const RECOVERY_INTERRUPTED_MARKERS = ['生成任务中断', '已退回积分']
-const activePolls = new Set()
-
-function normalizeStatus(status) {
-  return (status || '').toLowerCase()
-}
-
-function resolveRecordStatus(record) {
-  const status = normalizeStatus(record?.status)
-  if (record?.imagePath || record?.imageUrl || record?.remoteImageAvailable) return 'completed'
-  if (status === 'completed') return 'processing'
-  if (status === 'failed' && isRecoveryInterruptedRecord(record)) return 'processing'
-  if (status === 'failed') return status
-  return status || 'processing'
-}
-
-function isRecoveryInterruptedRecord(record) {
-  const message = record?.errorMessage || ''
-  return RECOVERY_INTERRUPTED_MARKERS.every(marker => message.includes(marker))
-}
-
-function friendlyGenerationError(message, record = null) {
-  const text = message || ''
-  const policyAdvice = extractPolicyAdvice(text)
-  if (policyAdvice) {
-    return `${POLICY_ADVICE_PREFIX}${policyAdvice}`
-  }
-  const rawApiError = /API|503|model_not_found|No available channel|request id|distributor|GPT-Pro/i.test(text)
-  if (record?.generationType === 'img2img' || rawApiError) {
-    return '生成失败，请更换图片重试'
-  }
-  return text || '生成失败'
-}
-
-function extractPolicyAdvice(text) {
-  if (!text) return ''
-  const markerIndex = text.indexOf(POLICY_ADVICE_PREFIX)
-  if (markerIndex >= 0) {
-    return text.slice(markerIndex + POLICY_ADVICE_PREFIX.length).trim()
-  }
-  const legacyIndex = text.indexOf(LEGACY_POLICY_ADVICE_PREFIX)
-  if (legacyIndex >= 0) {
-    return text.slice(legacyIndex + LEGACY_POLICY_ADVICE_PREFIX.length).trim()
-  }
-  return ''
-}
+const GENERATION_SUBMIT_ATTEMPTS = 3
+const GENERATION_RETRY_DELAY_MS = 800
+let historyFetchPromise = null
+let historyFetchOwner = null
 
 function readCache() {
   try {
@@ -68,16 +22,6 @@ function readCache() {
 
 function writeCache(data) {
   localStorage.setItem(CACHE_KEY, JSON.stringify({ ...data, updatedAt: Date.now() }))
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-function isTransientPollError(error) {
-  const status = error?.response?.status
-  if (!status) return true
-  return status === 408 || status === 429 || status >= 500
 }
 
 function isInvalidKeyError(e) {
@@ -97,6 +41,7 @@ export const useUserStore = defineStore('user', () => {
   const generating = ref(false)
   const refreshing = ref(false)
   const syncingCredits = ref(false)
+  const pendingGenerations = new Map()
 
   const remainingCredits = computed(() => {
     const authStore = useAuthStore()
@@ -175,11 +120,33 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function fetchHistory() {
+    const owner = historyOwner()
+    if (!owner) return
+    if (historyFetchPromise && historyFetchOwner === owner) return historyFetchPromise
+    const request = loadHistory(owner)
+    historyFetchPromise = request
+    historyFetchOwner = owner
+    try {
+      return await request
+    } finally {
+      if (historyFetchPromise === request) {
+        historyFetchPromise = null
+        historyFetchOwner = null
+      }
+    }
+  }
+
+  function historyOwner() {
     const authStore = useAuthStore()
-    if (!keyCode.value && !authStore.isUser) return
+    if (authStore.isUser) return `user:${authStore.user?.id || authStore.user?.email}`
+    return keyCode.value ? `key:${keyCode.value}` : ''
+  }
+
+  async function loadHistory(expectedOwner) {
+    const authStore = useAuthStore()
     const params = keyCode.value ? { keyCode: keyCode.value } : undefined
     const { data } = await api.get('/user/history', { params })
-    if (data.code === 200) {
+    if (data.code === 200 && historyOwner() === expectedOwner) {
       history.value = data.data || []
       persist()
       try {
@@ -192,7 +159,6 @@ export const useUserStore = defineStore('user', () => {
       } catch {
         /* ignore */
       }
-      resumePendingGenerations().catch(() => {})
     }
   }
 
@@ -266,173 +232,119 @@ export const useUserStore = defineStore('user', () => {
     syncCreditsFromServer()
       .then(ok => {
         if (ok) {
-          fetchHistory()
-            .then(() => resumePendingGenerations())
-            .catch(() => {})
+          fetchHistory().catch(() => {})
         }
       })
       .catch(() => {})
   }
 
-  function collectPendingRecordIds() {
-    const ids = new Set()
-    try {
-      const convStore = useConversationsStore()
-      for (const conv of convStore.conversations) {
-        for (const msg of conv.messages) {
-          if (msg.role !== 'assistant') continue
-          const status = resolveRecordStatus(msg.record || { status: msg.status })
-          if (status !== 'processing') continue
-          const id = msg.recordId || msg.record?.id
-          if (id != null) ids.add(Number(id))
-        }
-      }
-    } catch {
-      /* store may not be ready */
-    }
-    return [...ids]
+  function generationRetryable(error) {
+    if (error?.retryable === false) return false
+    const status = Number(error?.response?.status)
+    return !error?.response || status === 408 || status === 429 || status >= 500
   }
 
-  async function pollRecordStatus(recordId) {
-    const normalizedId = Number(recordId)
-    if (activePolls.has(normalizedId)) {
-      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
-        await sleep(POLL_INTERVAL_MS)
-        const cached = history.value.find(item => Number(item.id) === normalizedId)
-        const status = resolveRecordStatus(cached)
-        if (status === 'completed') return cached
-        if (status === 'failed') throw new Error(cached?.errorMessage || '生成失败')
-      }
-      throw new Error('生图超时，请刷新页面查看历史')
-    }
+  function retryDelay(ms) {
+    return new Promise(resolve => window.setTimeout(resolve, ms))
+  }
 
-    activePolls.add(normalizedId)
-    try {
-      let lastTransientError = null
-      for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
-        await sleep(POLL_INTERVAL_MS)
-        let data
-        try {
-          const params = keyCode.value ? { keyCode: keyCode.value } : undefined
-          const response = await api.get(`/user/generate/${normalizedId}`, { params })
-          data = response.data
-          if (data.code !== 200) throw new Error(data.message)
-          lastTransientError = null
-        } catch (error) {
-          if (isTransientPollError(error)) {
-            lastTransientError = error
-            continue
-          }
+  async function reconcileGeneration(clientMessageId) {
+    if (!clientMessageId) return null
+    await fetchHistory().catch(() => {})
+    return history.value.find(record => record.clientMessageId === clientMessageId) || null
+  }
+
+  async function postGeneration(requestFactory, clientMessageId) {
+    let lastError
+    for (let attempt = 1; attempt <= GENERATION_SUBMIT_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await requestFactory()
+        const { data } = response
+        if (data.code !== 200) {
+          const error = new Error(data.message || '生成任务提交失败')
+          error.retryable = false
           throw error
         }
-
-        const record = data.data
-        upsertHistoryRecord(record)
-
-        const status = resolveRecordStatus(record)
-        if (status === 'completed') {
-          await syncCreditsFromServer()
-          return record
+        return data.data
+      } catch (error) {
+        lastError = error
+        if (!generationRetryable(error)) break
+        const recovered = await reconcileGeneration(clientMessageId)
+        if (recovered) return recovered
+        if (attempt < GENERATION_SUBMIT_ATTEMPTS) {
+          await retryDelay(GENERATION_RETRY_DELAY_MS * attempt)
         }
-        if (status === 'failed') {
-          await syncCreditsFromServer()
-          try {
-            useConversationsStore().failAssistantForRecord(normalizedId, record.errorMessage || '生成失败')
-          } catch {
-            /* ignore */
+      }
+    }
+    const recovered = await reconcileGeneration(clientMessageId)
+    if (recovered) return recovered
+    const error = new Error(lastError?.response?.data?.message || lastError?.message || '提交请求未被后端确认，请检查网络后重试')
+    error.cause = lastError
+    throw error
+  }
+
+  async function generateWithRetry({ prompt, type, sourceImage, sourceImages, clientMessageId }) {
+    const images = Array.isArray(sourceImages) ? sourceImages : (sourceImage ? [sourceImage] : [])
+    if (type === 'img2img' && (images.length === 0 || images.length > 4)) {
+      throw new Error('请选择 1 至 4 张参考图')
+    }
+    const payload = { keyCode: keyCode.value, prompt, type, sourceImages: images, clientMessageId }
+    const headers = clientMessageId ? { 'X-Request-ID': clientMessageId } : undefined
+    let record
+    if (type === 'img2img' && images.length) {
+      const sourceFiles = images.map((image, index) => dataUrlToFile(image, 'source-' + index))
+      try {
+        record = await postGeneration(() => {
+          const form = new FormData()
+          form.append('prompt', prompt)
+          form.append('type', type)
+          if (keyCode.value) form.append('keyCode', keyCode.value)
+          if (clientMessageId) form.append('clientMessageId', clientMessageId)
+          for (const sourceFile of sourceFiles) {
+            form.append(sourceFiles.length === 1 ? 'sourceImage' : 'sourceImages',
+              sourceFile, sourceFile.name || 'source.jpg')
           }
-          throw new Error(record.errorMessage || '生成失败')
-        }
+          return api.post('/user/generate', form, { headers })
+        }, clientMessageId)
+      } catch (error) {
+        const status = Number(error?.cause?.response?.status || error?.response?.status)
+        if (![404, 405, 415].includes(status)) throw error
+        record = await postGeneration(() => api.post('/user/generate', payload, { headers }), clientMessageId)
       }
-      throw new Error('生图超时，请刷新页面查看历史')
-    } finally {
-      activePolls.delete(normalizedId)
+    } else {
+      record = await postGeneration(() => api.post('/user/generate', payload, { headers }), clientMessageId)
     }
+
+    upsertHistoryRecord(record)
+    applyLocalGenerationCharge(record)
+    generating.value = false
+    await syncCreditsFromServer()
+    return record
   }
 
-  async function resumePendingGenerations() {
-    const authStore = useAuthStore()
-    if (!keyCode.value && !authStore.isUser) return
-    const pendingIds = collectPendingRecordIds()
-    if (!pendingIds.length) return
-    await Promise.allSettled(
-      pendingIds.map(id =>
-        pollRecordStatus(id).catch(err => {
-          recoverRecordAfterPollError(id, err.message).catch(() => {})
-        })
-      )
-    )
-  }
-
-  async function recoverRecordAfterPollError(recordId, errorMessage) {
-    const normalizedId = Number(recordId)
-    for (let i = 0; i < RECOVERY_MAX_ATTEMPTS; i++) {
-      await sleep(RECOVERY_INTERVAL_MS)
-      await fetchHistory().catch(() => {})
-      const latest = history.value.find(item => Number(item.id) === normalizedId)
-      if (resolveRecordStatus(latest) === 'completed') {
-        try {
-          useConversationsStore().syncRecord(latest)
-          useConversationsStore().syncFromHistoryRecords(history.value)
-        } catch {
-          /* ignore */
-        }
-        return latest
-      }
-      if (resolveRecordStatus(latest) === 'processing') {
-        continue
-      }
-      if (resolveRecordStatus(latest) === 'failed') {
-        try {
-          useConversationsStore().failAssistantForRecord(recordId, latest.errorMessage || errorMessage)
-        } catch {
-          /* ignore */
-        }
-        return latest
-      }
-    }
-    return null
-  }
-
-  async function generate({ prompt, type, sourceImage, model, clientMessageId }) {
+  function generate(request) {
+    const key = request.clientMessageId || ''
+    if (key && pendingGenerations.has(key)) return pendingGenerations.get(key)
     generating.value = true
-    try {
-      const { data } = await generateApi.post('/user/generate', {
-        keyCode: keyCode.value,
-        prompt,
-        type,
-        model,
-        sourceImage,
-        clientMessageId
+    const operation = generateWithRetry(request)
+      .catch(async error => {
+        await Promise.all([
+          syncCreditsFromServer().catch(() => {}),
+          fetchHistory().catch(() => {})
+        ])
+        throw error
       })
-      if (data.code !== 200) throw new Error(data.message)
-
-      upsertHistoryRecord(data.data)
-      applyLocalGenerationCharge(data.data)
-      generating.value = false
-      await syncCreditsFromServer()
-
-      if (resolveRecordStatus(data.data) === 'processing') {
-        pollRecordStatus(data.data.id).catch(err => {
-          recoverRecordAfterPollError(data.data.id, err.message).catch(() => {})
-        })
-      }
-
-      return data.data
-    } catch (e) {
-      await Promise.all([
-        syncCreditsFromServer().catch(() => {}),
-        fetchHistory().catch(() => {})
-      ])
-      throw e
-    } finally {
-      generating.value = false
-    }
+      .finally(() => {
+        if (key) pendingGenerations.delete(key)
+        generating.value = pendingGenerations.size > 0
+      })
+    if (key) pendingGenerations.set(key, operation)
+    return operation
   }
 
   function applyLocalGenerationCharge(record) {
     const cost = Number(record?.creditsCost || 20)
-    if (!Number.isFinite(cost) || cost <= 0 || resolveRecordStatus(record) !== 'processing') {
+    if (!Number.isFinite(cost) || cost <= 0 || resolveGenerationStatus(record) !== 'processing') {
       return
     }
     const authStore = useAuthStore()
@@ -471,6 +383,6 @@ export const useUserStore = defineStore('user', () => {
     activating, generating, refreshing, syncingCredits,
     remainingCredits, isActivated, isBusy,
     activate, fetchHistory, refreshSession, initSession,
-    syncCreditsFromServer, generate, resumePendingGenerations, logout, hydrateFromCache
+    syncCreditsFromServer, generate, logout, hydrateFromCache
   }
 })
