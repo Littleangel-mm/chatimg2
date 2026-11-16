@@ -16,6 +16,8 @@ const copied = ref(false)
 const scrollEl = ref(null)
 const refreshed = ref(false)
 const mediaFallback = ref({})
+const mediaFailures = ref({})
+const mediaRetry = ref({})
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000
 let pollTimer = null
@@ -73,14 +75,41 @@ function switchTab(type) {
 }
 
 function imageUrl(item) {
-  return mediaFallback.value[item.id] || getInspirationImageUrl(item)
+  if (mediaFailed(item)) return ''
+  const url = mediaFallback.value[item.id] || getInspirationImageUrl(item)
+  const retry = mediaRetry.value[item.id]
+  if (!url || !retry) return url
+  return `${url}${url.includes('?') ? '&' : '?'}_retry=${retry}`
 }
 
 function onMediaError(item) {
   const fallback = getInspirationFallbackUrl(item)
   if (fallback && mediaFallback.value[item.id] !== fallback) {
     mediaFallback.value = { ...mediaFallback.value, [item.id]: fallback }
+    mediaFailures.value = { ...mediaFailures.value, [item.id]: 1 }
+    return
   }
+  const failures = mediaFailures.value[item.id] || 0
+  if (failures < 1) {
+    mediaFailures.value = { ...mediaFailures.value, [item.id]: 1 }
+    mediaRetry.value = { ...mediaRetry.value, [item.id]: Date.now() }
+    return
+  }
+  mediaFailures.value = { ...mediaFailures.value, [item.id]: 2 }
+}
+
+function mediaFailed(item) {
+  return (mediaFailures.value[item?.id] || 0) >= 2
+}
+
+function retryMedia(item) {
+  if (!item?.id) return
+  const nextRetry = Date.now()
+  const nextFallback = { ...mediaFallback.value }
+  delete nextFallback[item.id]
+  mediaFallback.value = nextFallback
+  mediaFailures.value = { ...mediaFailures.value, [item.id]: 0 }
+  mediaRetry.value = { ...mediaRetry.value, [item.id]: nextRetry }
 }
 
 function isVideoItem(item) {
@@ -165,23 +194,29 @@ function goHome() {
             :class="{ 'insp-card--video': isVideoItem(item) }"
             @click="selected = item"
           >
-            <img
-              v-if="!isVideoItem(item)"
-              :src="imageUrl(item)"
-              :alt="item.prompt"
-              loading="lazy"
-              @error="onMediaError(item)"
-            />
-            <video
-              v-else
-              :src="imageUrl(item)"
-              muted
-              loop
-              autoplay
-              playsinline
-              preload="auto"
-              @error="onMediaError(item)"
-            />
+            <div v-if="mediaFailed(item)" class="insp-media-placeholder" role="img" :aria-label="item.prompt">
+              <span>图片暂时无法加载</span>
+              <button type="button" @click.stop="retryMedia(item)">重新加载</button>
+            </div>
+            <template v-else>
+              <img
+                v-if="!isVideoItem(item)"
+                :src="imageUrl(item)"
+                alt=""
+                loading="lazy"
+                @error="onMediaError(item)"
+              />
+              <video
+                v-else
+                :src="imageUrl(item)"
+                muted
+                loop
+                autoplay
+                playsinline
+                preload="auto"
+                @error="onMediaError(item)"
+              />
+            </template>
             <figcaption class="insp-card-overlay">
               <p class="insp-card-prompt">{{ item.prompt }}</p>
               <button class="insp-card-btn" @click.stop="usePrompt(item.prompt)">
@@ -211,22 +246,28 @@ function goHome() {
         <div class="insp-detail">
           <button class="detail-close" @click="selected = null">✕</button>
           <div class="insp-detail-img">
-            <img
-              v-if="!isVideoItem(selected)"
-              :src="imageUrl(selected)"
-              :alt="selected.prompt"
-              @error="onMediaError(selected)"
-            />
-            <video
-              v-else
-              :src="imageUrl(selected)"
-              controls
-              autoplay
-              loop
-              playsinline
-              preload="metadata"
-              @error="onMediaError(selected)"
-            />
+            <div v-if="mediaFailed(selected)" class="insp-media-placeholder insp-media-placeholder--detail" role="img" :aria-label="selected.prompt">
+              <span>图片暂时无法加载</span>
+              <button type="button" @click.stop="retryMedia(selected)">重新加载</button>
+            </div>
+            <template v-else>
+              <img
+                v-if="!isVideoItem(selected)"
+                :src="imageUrl(selected)"
+                alt=""
+                @error="onMediaError(selected)"
+              />
+              <video
+                v-else
+                :src="imageUrl(selected)"
+                controls
+                autoplay
+                loop
+                playsinline
+                preload="metadata"
+                @error="onMediaError(selected)"
+              />
+            </template>
           </div>
           <div class="insp-detail-info">
             <h3>提示词 Prompt</h3>
@@ -385,11 +426,49 @@ function goHome() {
   transition: transform 0.25s;
 }
 
+.insp-card img {
+  aspect-ratio: 4 / 5;
+  min-height: 180px;
+  object-fit: cover;
+  background: var(--bg-sidebar);
+}
+
 .insp-card video {
   aspect-ratio: 16 / 9;
   min-height: 140px;
   object-fit: cover;
   background: #2a2020;
+}
+
+.insp-media-placeholder {
+  aspect-ratio: 4 / 5;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  color: var(--text-muted);
+  background: var(--bg-sidebar);
+  text-align: center;
+  font-size: 13px;
+}
+
+.insp-media-placeholder button {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  font-size: 12px;
+}
+
+.insp-media-placeholder--detail {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  aspect-ratio: auto;
 }
 
 .insp-card:hover img,
@@ -617,15 +696,51 @@ function goHome() {
     gap: 12px;
     padding: 12px 16px;
   }
+  .insp-heading {
+    flex: 1;
+    min-width: 0;
+  }
+  .insp-heading h1 {
+    font-size: 24px;
+  }
   .insp-tabs {
     margin-left: 0;
+    width: 100%;
+  }
+  .insp-tab {
+    flex: 1;
+    padding: 8px 12px;
   }
   .insp-inner {
-    padding: 16px;
+    padding: 12px;
   }
   .insp-grid {
     columns: 2 140px;
     column-gap: 10px;
+  }
+  .insp-card {
+    margin-bottom: 10px;
+  }
+  .insp-card img,
+  .insp-media-placeholder {
+    min-height: 140px;
+  }
+  .insp-card-overlay {
+    position: static;
+    opacity: 1;
+    background: var(--bg-elevated);
+    padding: 10px;
+  }
+  .insp-card-prompt {
+    color: var(--text);
+    -webkit-line-clamp: 2;
+  }
+  .insp-card-btn {
+    width: 100%;
+  }
+  .insp-detail-overlay {
+    align-items: flex-end;
+    padding: 10px;
   }
   .insp-detail {
     flex-direction: column;
@@ -634,6 +749,36 @@ function goHome() {
   .insp-detail-img {
     width: 100%;
     max-height: 38vh;
+  }
+  .insp-detail-info {
+    padding: 18px;
+  }
+  .insp-detail-actions {
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1199px) {
+  .insp-grid {
+    columns: 4 200px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 960px) {
+  .insp-grid {
+    columns: 3 200px;
+  }
+}
+
+@media (max-width: 420px) {
+  .insp-topbar {
+    padding: 10px;
+  }
+  .back-btn {
+    padding: 8px 12px;
+  }
+  .insp-grid {
+    columns: 1 100%;
   }
 }
 </style>
