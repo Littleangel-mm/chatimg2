@@ -31,3 +31,5 @@ WHERE active.deleted_at IS NULL
 CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_conversations_user_client_active
     ON chat_conversations(user_id, client_id)
     WHERE deleted_at IS NULL AND client_id IS NOT NULL;
+
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata TEXT;

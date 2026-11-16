@@ -60,6 +60,12 @@ function newChat() {
   emit('close-mobile')
 }
 
+function newAssistant() {
+  convStore.createConversation('prompt_assistant')
+  router.push('/')
+  emit('close-mobile')
+}
+
 function toggleSidebar() {
   if (window.matchMedia('(max-width: 768px)').matches) {
     convStore.sidebarOpen = false
@@ -124,6 +130,7 @@ async function logout() {
 
     <div class="new-actions">
       <button class="new-btn" @click="newChat">图片生成</button>
+      <button class="new-btn assistant" @click="newAssistant">AI提示词助手</button>
       <button class="new-btn gallery" :class="{ active: route.name === 'inspiration' }" @click="openInspiration">
         灵感画廊
       </button>
@@ -258,6 +265,16 @@ async function logout() {
   color: var(--text-strong);
   background: rgba(255, 251, 249, 0.9);
   border-color: rgba(201, 168, 108, 0.42);
+}
+
+.new-btn.assistant {
+  color: var(--accent-hover);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.new-btn.assistant:hover {
+  background: var(--gold-soft);
 }
 
 .new-btn.video:hover,

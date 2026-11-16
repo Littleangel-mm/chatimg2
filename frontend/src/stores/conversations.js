@@ -35,12 +35,16 @@ function isVideoType(type) {
   return type === 'text2video' || type === 'image2video'
 }
 
+function isAssistantType(type) {
+  return type === 'prompt_assistant'
+}
+
 function generationArea(type) {
   return isVideoType(type) ? 'video' : 'image'
 }
 
 function normalizeConversationType(type) {
-  if (type === 'img2img' || isVideoType(type)) return type
+  if (type === 'img2img' || isVideoType(type) || isAssistantType(type)) return type
   return 'text2img'
 }
 
@@ -148,6 +152,7 @@ function defaultTitle(prompt, type) {
   if (text) return text.length > 28 ? `${text.slice(0, 28)}…` : text
   if (type === 'image2video') return '图生视频对话'
   if (type === 'text2video') return '文生视频对话'
+  if (type === 'prompt_assistant') return '提示词助手'
   return type === 'img2img' ? '图生图对话' : '文生图对话'
 }
 
@@ -239,6 +244,7 @@ export const useConversationsStore = defineStore('conversations', () => {
           videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
           status: messageStatusForSync(msg),
           errorMessage: messageErrorForSync(msg),
+          metadata: msg.assistant ? JSON.stringify(msg.assistant) : (msg.metadata || null),
           createdAt: msg.createdAt
         }))
       }))
@@ -273,10 +279,16 @@ export const useConversationsStore = defineStore('conversations', () => {
         } : null,
         videoTaskCode: msg.videoTaskCode || msg.videoTask?.taskCode || null,
         videoTask: msg.videoTask || null,
+        metadata: msg.metadata || null,
         status: msg.status || null,
         errorMessage: msg.errorMessage ? friendlyGenerationError(msg.errorMessage) : null,
         createdAt: msg.createdAt || Date.now()
-      }))
+      })).map(message => {
+        if (message.metadata) {
+          try { message.assistant = JSON.parse(message.metadata) } catch { /* ignore malformed metadata */ }
+        }
+        return message
+      })
     }
     for (let index = 1; index < materialized.messages.length; index++) {
       const message = materialized.messages[index]
@@ -617,6 +629,27 @@ export const useConversationsStore = defineStore('conversations', () => {
     touchConversation(conv)
     persist()
     return { userMsg, assistantMsg }
+  }
+
+  function updateAssistantMessage(messageId, result) {
+    if (!messageId || !result) return false
+    for (const conv of conversations.value) {
+      const message = (conv.messages || []).find(item => item.id === messageId && item.role === 'assistant')
+      if (!message) continue
+      message.content = result.reply || ''
+      message.assistant = {
+        prompt: result.prompt || '',
+        negativePrompt: result.negativePrompt || '',
+        questions: Array.isArray(result.questions) ? result.questions : [],
+        suggestions: Array.isArray(result.suggestions) ? result.suggestions : []
+      }
+      message.status = 'completed'
+      message.errorMessage = null
+      touchConversation(conv)
+      persist()
+      return true
+    }
+    return false
   }
 
   function syncRecord(record) {
@@ -1018,6 +1051,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     flushPendingDeletes,
     ensureActive,
     addExchange,
+    updateAssistantMessage,
     syncRecord,
     attachRecordToMessage,
     attachVideoTaskToMessage,

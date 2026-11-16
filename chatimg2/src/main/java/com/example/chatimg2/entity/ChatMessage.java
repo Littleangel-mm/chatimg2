@@ -38,6 +38,9 @@ public class ChatMessage {
     @Column(name = "video_task_code", length = 40)
     private String videoTaskCode;
 
+    @Column(columnDefinition = "TEXT")
+    private String metadata;
+
     @Column(length = 50)
     private String intent;
 

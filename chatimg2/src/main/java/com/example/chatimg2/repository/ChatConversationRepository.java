@@ -19,5 +19,7 @@ public interface ChatConversationRepository extends JpaRepository<ChatConversati
 
     Optional<ChatConversation> findByUserIdAndClientId(Integer userId, String clientId);
 
+    Optional<ChatConversation> findFirstByUserIdAndClientIdAndDeletedAtIsNull(Integer userId, String clientId);
+
     List<ChatConversation> findAllByUserIdAndClientId(Integer userId, String clientId);
 }

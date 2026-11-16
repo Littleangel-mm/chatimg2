@@ -188,6 +188,7 @@ public final class DatabaseMigration {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at)");
             stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_id VARCHAR(120)");
             stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS video_task_code VARCHAR(40)");
+            stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS metadata TEXT");
             stmt.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS source_image_url TEXT");
             stmt.execute("ALTER TABLE generation_records ADD COLUMN IF NOT EXISTS source_image_paths TEXT");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_client_id ON chat_messages(conversation_id, client_id)");

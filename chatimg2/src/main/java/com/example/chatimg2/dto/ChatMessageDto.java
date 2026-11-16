@@ -18,6 +18,7 @@ public class ChatMessageDto {
     private String recordGenerationType;
     private Boolean recordRecoverable;
     private String videoTaskCode;
+    private String metadata;
     private VideoGenerationResponse videoTask;
     private String status;
     private String errorMessage;

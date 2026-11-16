@@ -1,11 +1,14 @@
 package com.example.chatimg2.controller;
 
 import com.example.chatimg2.dto.ApiResponse;
+import com.example.chatimg2.dto.AssistantChatRequest;
+import com.example.chatimg2.dto.AssistantChatResponse;
 import com.example.chatimg2.dto.ChatSyncRequest;
 import com.example.chatimg2.dto.ChatSyncResponse;
 import com.example.chatimg2.service.AuthPrincipal;
 import com.example.chatimg2.service.AuthService;
 import com.example.chatimg2.service.ChatHistoryService;
+import com.example.chatimg2.service.PromptAssistantService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +20,7 @@ public class ChatController {
 
     private final AuthService authService;
     private final ChatHistoryService chatHistoryService;
+    private final PromptAssistantService promptAssistantService;
 
     @GetMapping("/sync")
     public ApiResponse<ChatSyncResponse> load(HttpServletRequest request) {
@@ -37,5 +41,12 @@ public class ChatController {
         AuthPrincipal principal = authService.requireUser(request);
         chatHistoryService.softDelete(principal.user(), clientId);
         return ApiResponse.success(null);
+    }
+
+    @PostMapping("/assistant/messages")
+    public ApiResponse<AssistantChatResponse> assistant(@RequestBody AssistantChatRequest assistantRequest,
+                                                         HttpServletRequest request) {
+        AuthPrincipal principal = authService.requireUser(request);
+        return ApiResponse.success(promptAssistantService.chat(principal.user(), assistantRequest));
     }
 }

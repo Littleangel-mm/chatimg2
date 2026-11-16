@@ -3,6 +3,7 @@ import { ref, watch, nextTick, onMounted, onActivated, computed } from 'vue'
 import { useConversationsStore } from '../../stores/conversations'
 import { useUserStore } from '../../stores/user'
 import { useAuthStore } from '../../stores/auth'
+import api, { getImageUrl } from '../../api'
 import { compressImage } from '../../utils/image'
 import ChatMessage from './ChatMessage.vue'
 
@@ -16,6 +17,7 @@ const sourcePreviews = ref([])
 const sourceBase64s = ref([])
 const error = ref('')
 const uploading = ref(false)
+const assistantSending = ref(false)
 const messagesEl = ref(null)
 const promptEl = ref(null)
 
@@ -50,6 +52,7 @@ const accountInfo = computed(() => ({
 }))
 
 const currentType = computed(() => conversation()?.type || 'text2img')
+const isPromptAssistant = computed(() => currentType.value === 'prompt_assistant')
 const activeMessages = computed(() => {
   const messages = conversation()?.messages || []
   return [...messages].sort((a, b) => {
@@ -221,6 +224,46 @@ function switchChatType(type) {
   })
 }
 
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function applyAssistantPrompt(result) {
+  let nextType = sourcePreviews.value.length ? 'img2img' : 'text2img'
+  if (!sourcePreviews.value.length) {
+    const previous = [...(conversation()?.messages || [])]
+      .reverse()
+      .find(message => message.role === 'assistant' && message.record &&
+        (message.record.imagePath || message.record.imageUrl || message.record.remoteImageAvailable || message.record.taskCode))
+    const previousUrl = previous ? getImageUrl(previous.record) : ''
+    if (previousUrl) {
+      try {
+        const response = await fetch(previousUrl, { credentials: 'include' })
+        if (response.ok) {
+          const dataUrl = await blobToDataUrl(await response.blob())
+          sourcePreviews.value = [dataUrl]
+          sourceBase64s.value = [dataUrl]
+          nextType = 'img2img'
+        }
+      } catch {
+        // 旧图不可读取时仍允许把提示词应用到文生图
+      }
+    }
+  }
+  switchChatType(nextType)
+  prompt.value = result?.prompt || ''
+  nextTick(() => {
+    resizePrompt()
+    promptEl.value?.focus()
+    scrollToBottom()
+  })
+}
+
 function openKeyModal() {
   window.dispatchEvent(new CustomEvent('open-key-modal'))
 }
@@ -236,11 +279,11 @@ function toggleContactMenu() {
 }
 
 async function send() {
-  if (userStore.generating || uploading.value) {
+  if (userStore.generating || uploading.value || assistantSending.value) {
     return
   }
 
-  if (!userStore.isActivated) {
+  if (!isPromptAssistant.value && !userStore.isActivated) {
     openKeyModal()
     return
   }
@@ -252,6 +295,33 @@ async function send() {
   }
 
   const conv = convStore.ensureActive(currentType.value || 'text2img')
+  if (conv.type === 'prompt_assistant') {
+    error.value = ''
+    const exchange = convStore.addExchange(conv.id, { prompt: text, type: 'prompt_assistant' })
+    prompt.value = ''
+    assistantSending.value = true
+    scrollToBottom()
+    try {
+      await convStore.syncRemote().catch(() => false)
+      const { data } = await api.post('/chat/assistant/messages', {
+        conversationId: conv.id,
+        clientMessageId: exchange.userMsg.id,
+        message: text
+      })
+      if (data.code !== 200) throw new Error(data.message || '提示词助手请求失败')
+      convStore.updateAssistantMessage(exchange.assistantMsg.id, data.data)
+      convStore.syncRemote().catch(() => false)
+    } catch (e) {
+      const msg = e.response?.data?.message || e.message || '提示词助手请求失败'
+      error.value = msg
+      convStore.failAssistantMessage(exchange?.assistantMsg?.id, msg)
+      convStore.syncRemote().catch(() => false)
+    } finally {
+      assistantSending.value = false
+    }
+    scrollToBottom()
+    return
+  }
   const isImg2img = conv.type === 'img2img'
   const submittedSourceImages = isImg2img ? [...sourceBase64s.value] : []
 
@@ -341,7 +411,7 @@ onActivated(applyPendingPrompt)
       <div class="header-title">
         <h1>{{ conversation()?.title || 'img2.ai' }}</h1>
         <span v-if="conversation()" class="type-badge">
-          {{ conversation().type === 'img2img' ? '\u56fe\u751f\u56fe' : '\u6587\u751f\u56fe' }}
+          {{ conversation().type === 'img2img' ? '\u56fe\u751f\u56fe' : conversation().type === 'prompt_assistant' ? 'AI提示词助手' : '\u6587\u751f\u56fe' }}
         </span>
       </div>
       <div class="avatar-wrap">
@@ -406,12 +476,14 @@ onActivated(applyPendingPrompt)
 
     <div v-else ref="messagesEl" class="messages">
       <div v-if="conversation().messages.length === 0" class="empty-chat">
-        <p>{{ conversation().type === 'img2img' ? '\u4e0a\u4f20\u53c2\u8003\u56fe\u5e76\u63cf\u8ff0\u60f3\u8981\u7684\u6548\u679c' : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762' }}</p>
+        <p>{{ conversation().type === 'img2img' ? '\u4e0a\u4f20\u53c2\u8003\u56fe\u5e76\u63cf\u8ff0\u60f3\u8981\u7684\u6548\u679c' : conversation().type === 'prompt_assistant' ? '告诉我你想创作或修改什么，我会连续记住上下文' : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762' }}</p>
       </div>
       <ChatMessage
         v-for="msg in activeMessages"
         :key="msg.id"
         :message="msg"
+        :assistant-mode="currentType === 'prompt_assistant'"
+        @apply-prompt="applyAssistantPrompt"
       />
     </div>
 
@@ -431,6 +503,13 @@ onActivated(applyPendingPrompt)
             @click="switchChatType('img2img')"
           >
             图生图
+          </button>
+          <button
+            type="button"
+            :class="{ active: currentType === 'prompt_assistant' }"
+            @click="switchChatType('prompt_assistant')"
+          >
+            提示词助手
           </button>
         </div>
         <div v-if="conversation().type === 'img2img'" class="upload-row">
@@ -453,21 +532,23 @@ onActivated(applyPendingPrompt)
             class="prompt"
             :placeholder="conversation().type === 'img2img'
               ? '描述如何使用这些参考图...'
-              : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762...'"
+              : conversation().type === 'prompt_assistant'
+                ? '继续描述你想优化的内容...'
+                : '\u63cf\u8ff0\u4f60\u60f3\u751f\u6210\u7684\u753b\u9762...'"
             rows="1"
             @keydown="onKeydown"
             @paste="onPaste"
             @input="resizePrompt"
           />
-          <select v-model="model" class="model-select" title="&#x6A21;&#x578B;">
+          <select v-if="!isPromptAssistant" v-model="model" class="model-select" title="&#x6A21;&#x578B;">
             <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.name }}</option>
           </select>
           <button
             class="send-btn"
-            :disabled="userStore.generating || uploading || !prompt.trim()"
+            :disabled="userStore.generating || uploading || assistantSending || !prompt.trim()"
             @click="send"
           >
-            <span v-if="userStore.generating">发送中...</span>
+            <span v-if="userStore.generating || assistantSending">发送中...</span>
             <span v-else>发送</span>
           </button>
         </div>

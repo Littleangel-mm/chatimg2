@@ -276,6 +276,7 @@ public class ChatHistoryService {
                 : message.getImagePath());
         dto.setRecordId(record != null ? record.getId() : message.getGenerationRecordId());
         dto.setVideoTaskCode(message.getVideoTaskCode());
+        dto.setMetadata(message.getMetadata());
         if (videoTask != null) {
             VideoGenerationResponse response = videoTaskMapper.toResponse(videoTask);
             dto.setVideoTaskCode(videoTask.getTaskCode());
@@ -361,6 +362,9 @@ public class ChatHistoryService {
                     && videoTaskRepository.existsByTaskCodeAndUserId(videoTaskCode, userId)) {
                 message.setVideoTaskCode(videoTaskCode);
             }
+            if (dto.getMetadata() != null && dto.getMetadata().length() <= 20000) {
+                message.setMetadata(dto.getMetadata());
+            }
             if (message.getCreatedAt() == null) {
                 message.setCreatedAt(fromMillis(dto.getCreatedAt()));
             }
@@ -441,7 +445,8 @@ public class ChatHistoryService {
     }
 
     private String resolveType(String type) {
-        if ("img2img".equals(type) || "text2video".equals(type) || "image2video".equals(type)) {
+        if ("img2img".equals(type) || "text2video".equals(type) || "image2video".equals(type)
+                || "prompt_assistant".equals(type)) {
             return type;
         }
         return "text2img";

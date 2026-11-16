@@ -13,8 +13,11 @@ const RECOVERY_GRACE_MS = 3 * 60 * 1000
 const AI_AVATAR_URL = 'http://xtstuc.dyfl.top/xtsimage/6a6f6a3beb424eaed75effde133c9b85.png'
 
 const props = defineProps({
-  message: { type: Object, required: true }
+  message: { type: Object, required: true },
+  assistantMode: { type: Boolean, default: false }
 })
+
+const emit = defineEmits(['apply-prompt'])
 
 const convStore = useConversationsStore()
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
@@ -127,6 +130,17 @@ function openPreview(url) {
       </template>
 
       <template v-else>
+        <template v-if="message.assistant && message.status === 'completed'">
+          <div class="assistant-advice"><p>{{ message.content }}</p></div>
+          <div v-if="message.assistant?.prompt" class="assistant-prompt-card">
+            <strong>最终提示词</strong>
+            <pre>{{ message.assistant.prompt }}</pre>
+            <button type="button" @click="emit('apply-prompt', message.assistant)">应用到生图</button>
+          </div>
+          <div v-if="message.assistant?.negativePrompt" class="assistant-negative">
+            反向提示词：{{ message.assistant.negativePrompt }}
+          </div>
+        </template>
         <div v-if="isProcessing" class="assistant-loading">
           <span class="spin">⟳</span>
           <span>{{ loadingText }}</span>
@@ -298,6 +312,37 @@ function openPreview(url) {
 
 .assistant-advice p {
   margin: 0;
+}
+
+.assistant-prompt-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-input);
+}
+
+.assistant-prompt-card pre {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.assistant-prompt-card button {
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--gradient);
+  color: #fff;
+  font-size: 12px;
+}
+
+.assistant-negative {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .assistant-image img {
