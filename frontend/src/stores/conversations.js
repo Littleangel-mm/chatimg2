@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import api from '../api'
 import { getImageUrl } from '../api'
 import { friendlyGenerationError, resolveGenerationStatus } from '../utils/generation'
+import { isAssistantReply, messageStatus } from '../utils/assistant'
 
 const STORAGE_PREFIX = 'conversations_'
 const STORAGE_VERSION = 2
@@ -77,7 +78,7 @@ function recordForMessage(record, status, errorMessage) {
 function messageStatusForSync(msg) {
   if (msg?.role !== 'assistant') return null
   if (msg.videoTask) return msg.videoTask.status || msg.status || null
-  return resolveGenerationStatus(msg.record || { status: msg.status })
+  return messageStatus(msg)
 }
 
 function messageErrorForSync(msg) {
@@ -130,6 +131,7 @@ function sourceImageLooksSame(record, userMsg) {
 }
 
 function canRecoverRecordForMessage(record, conv, msg, userMsg) {
+  if (isAssistantReply(msg) || conv?.type === 'prompt_assistant') return false
   if (recordMatchesClientMessage(record, msg)) return true
   if (msg?.recordId || msg?.record?.id || record?.clientMessageId) return false
   return record?.prompt === userMsg?.content &&
@@ -287,6 +289,9 @@ export const useConversationsStore = defineStore('conversations', () => {
         if (message.metadata) {
           try { message.assistant = JSON.parse(message.metadata) } catch { /* ignore malformed metadata */ }
         }
+        if (conv.type === 'prompt_assistant' && message.role === 'assistant' && !message.record) {
+          message.assistant ||= { kind: 'prompt_assistant' }
+        }
         return message
       })
     }
@@ -308,8 +313,8 @@ export const useConversationsStore = defineStore('conversations', () => {
   function mergeMessage(localMsg, remoteMsg) {
     if (!localMsg) return remoteMsg
     if (!remoteMsg) return localMsg
-    const localStatus = resolveGenerationStatus(localMsg.record || { status: localMsg.status })
-    const remoteStatus = resolveGenerationStatus(remoteMsg.record || { status: remoteMsg.status })
+    const localStatus = messageStatus(localMsg)
+    const remoteStatus = messageStatus(remoteMsg)
     if ((localStatus === 'completed' || localStatus === 'failed') && remoteStatus === 'processing') {
       const merged = {
         ...remoteMsg,
@@ -613,8 +618,9 @@ export const useConversationsStore = defineStore('conversations', () => {
       createdAt: now
     }
     const assistantMsg = {
-      id: uid(),
+      id: type === 'prompt_assistant' ? `assistant-${userMsg.id}` : uid(),
       role: 'assistant',
+      ...(type === 'prompt_assistant' ? { assistant: { kind: 'prompt_assistant' } } : {}),
       recordId: null,
       record: null,
       status: 'processing',
@@ -638,6 +644,7 @@ export const useConversationsStore = defineStore('conversations', () => {
       if (!message) continue
       message.content = result.reply || ''
       message.assistant = {
+        kind: 'prompt_assistant',
         prompt: result.prompt || '',
         negativePrompt: result.negativePrompt || '',
         questions: Array.isArray(result.questions) ? result.questions : [],
@@ -969,7 +976,9 @@ export const useConversationsStore = defineStore('conversations', () => {
       const message = (conv.messages || []).find(item => item.id === messageId && item.role === 'assistant')
       if (!message) continue
       message.status = 'failed'
-      message.errorMessage = friendlyGenerationError(errorMessage) || '生成失败'
+      message.errorMessage = isAssistantReply(message)
+        ? (errorMessage || '助手回复失败，请重试')
+        : (friendlyGenerationError(errorMessage) || '生成失败')
       touchConversation(conv)
       persist()
       return true

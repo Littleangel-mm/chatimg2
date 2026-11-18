@@ -6,5 +6,6 @@ import lombok.Data;
 public class AssistantChatRequest {
     private String conversationId;
     private String clientMessageId;
+    private String assistantMessageId;
     private String message;
 }

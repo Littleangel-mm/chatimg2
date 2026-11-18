@@ -12,6 +12,8 @@ import com.example.chatimg2.service.PromptAssistantService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -48,5 +50,11 @@ public class ChatController {
                                                          HttpServletRequest request) {
         AuthPrincipal principal = authService.requireUser(request);
         return ApiResponse.success(promptAssistantService.chat(principal.user(), assistantRequest));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> assistantError(ResponseStatusException error) {
+        return ResponseEntity.status(error.getStatusCode())
+                .body(ApiResponse.error(error.getStatusCode().value(), error.getReason()));
     }
 }

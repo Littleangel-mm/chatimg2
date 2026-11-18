@@ -8,18 +8,21 @@ import {
   resolveGenerationStatus
 } from '../../utils/generation'
 import ImageLightbox from '../ImageLightbox.vue'
+import { isAssistantReply } from '../../utils/assistant'
 
 const RECOVERY_GRACE_MS = 3 * 60 * 1000
 const AI_AVATAR_URL = 'http://xtstuc.dyfl.top/xtsimage/6a6f6a3beb424eaed75effde133c9b85.png'
 
 const props = defineProps({
   message: { type: Object, required: true },
-  assistantMode: { type: Boolean, default: false }
+  assistantMode: { type: Boolean, default: false },
+  assistantBusy: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['apply-prompt'])
+const emit = defineEmits(['apply-prompt', 'retry-assistant'])
 
 const convStore = useConversationsStore()
+const textReply = computed(() => isAssistantReply(props.message) || (props.assistantMode && !props.message.record))
 const imageUrl = computed(() => convStore.imageUrlForMessage(props.message))
 const sourceImageUrls = computed(() => {
   const images = props.message.sourceImages?.length
@@ -32,6 +35,7 @@ const generationRecord = computed(() => props.message.record || {
   retryable: props.message.retryable
 })
 const messageStatus = computed(() => {
+  if (textReply.value) return props.message.status || 'processing'
   return resolveGenerationStatus(generationRecord.value)
 })
 const backendError = computed(() => {
@@ -42,6 +46,7 @@ const recoveryNow = ref(Date.now())
 let recoveryTimer = null
 
 const isRecoverableFailure = computed(() => {
+  if (textReply.value) return false
   return isRecoverableGenerationFailure(generationRecord.value, backendError.value)
 })
 const isRecoveryGrace = computed(() => {
@@ -61,6 +66,7 @@ const policyAdviceText = computed(() => extractPolicyAdvice(props.message.errorM
 const isPolicyAdvice = computed(() => !!policyAdviceText.value)
 const displayError = computed(() => policyAdviceText.value || (props.message.errorMessage || ''))
 const loadingText = computed(() => {
+  if (textReply.value) return '正在整理思路，请稍候…'
   if (isRecoveryGrace.value) {
     return '稍等一下，我马上就好，就快好了喵～'
   }
@@ -130,7 +136,7 @@ function openPreview(url) {
       </template>
 
       <template v-else>
-        <template v-if="message.assistant && message.status === 'completed'">
+        <template v-if="textReply && message.status === 'completed'">
           <div class="assistant-advice"><p>{{ message.content }}</p></div>
           <div v-if="message.assistant?.prompt" class="assistant-prompt-card">
             <strong>最终提示词</strong>
@@ -140,8 +146,11 @@ function openPreview(url) {
           <div v-if="message.assistant?.negativePrompt" class="assistant-negative">
             反向提示词：{{ message.assistant.negativePrompt }}
           </div>
+          <ul v-if="message.assistant?.questions?.length" class="assistant-questions">
+            <li v-for="question in message.assistant.questions" :key="question">{{ question }}</li>
+          </ul>
         </template>
-        <div v-if="isProcessing" class="assistant-loading">
+        <div v-else-if="isProcessing" class="assistant-loading">
           <span class="spin">⟳</span>
           <span>{{ loadingText }}</span>
         </div>
@@ -149,7 +158,7 @@ function openPreview(url) {
           <p>{{ displayError }}</p>
         </div>
         <div v-else-if="isFailed" class="assistant-error">
-          <span>生成失败</span>
+          <span>{{ textReply ? '助手回复失败' : '生成失败' }}</span>
           <p v-if="displayError">{{ displayError }}</p>
         </div>
         <div v-else-if="imageUrl" class="assistant-image">
@@ -164,6 +173,12 @@ function openPreview(url) {
         <div v-else class="assistant-loading">
           <span class="text-muted">等待结果…</span>
         </div>
+        <button
+          v-if="textReply && !assistantBusy && (message.status !== 'completed' || !message.content?.trim())"
+          type="button"
+          class="assistant-retry"
+          @click="emit('retry-assistant', message)"
+        >重新请求回复</button>
       </template>
     </div>
     <ImageLightbox
@@ -343,6 +358,16 @@ function openPreview(url) {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.assistant-retry {
+  margin-top: 10px;
+  padding: 7px 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 12px;
 }
 
 .assistant-image img {

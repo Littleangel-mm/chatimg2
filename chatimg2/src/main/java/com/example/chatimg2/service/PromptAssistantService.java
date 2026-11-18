@@ -19,7 +19,6 @@ import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -29,6 +28,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Semaphore;
+import java.util.stream.IntStream;
+import java.util.Comparator;
 
 @Slf4j
 @Service
@@ -59,9 +61,32 @@ public class PromptAssistantService {
     private long readTimeoutMs;
 
     private volatile OkHttpClient client;
+    private final Semaphore capacity = new Semaphore(8);
+    private final Semaphore[] conversationGates = IntStream.range(0, 64)
+            .mapToObj(index -> new Semaphore(1)).toArray(Semaphore[]::new);
 
-    @Transactional
     public AssistantChatResponse chat(UserAccount user, AssistantChatRequest request) {
+        if (request == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "消息不能为空");
+        String conversationId = normalize(request.getConversationId(), 80, "conversationId");
+        Semaphore gate = conversationGates[Math.floorMod((user.getId() + ":" + conversationId).hashCode(), conversationGates.length)];
+        if (!gate.tryAcquire()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "本轮对话正在回复，请稍候");
+        }
+        try {
+            if (!capacity.tryAcquire()) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "提示词助手繁忙，请稍后重试");
+            }
+            try {
+                return chatOnce(user, request);
+            } finally {
+                capacity.release();
+            }
+        } finally {
+            gate.release();
+        }
+    }
+
+    private AssistantChatResponse chatOnce(UserAccount user, AssistantChatRequest request) {
         String conversationId = normalize(request.getConversationId(), 80, "conversationId");
         String clientMessageId = normalize(request.getClientMessageId(), 120, "clientMessageId");
         String messageText = normalize(request.getMessage(), MAX_MESSAGE_CHARS, "message");
@@ -70,21 +95,49 @@ public class PromptAssistantService {
         }
 
         ChatConversation conversation = conversationRepository.findFirstByUserIdAndClientIdAndDeletedAtIsNull(user.getId(), conversationId)
-                .orElseGet(() -> createConversation(user, conversationId, messageText));
+                .orElseGet(() -> {
+                    if (conversationRepository.findDeletedClientIdsByUserId(user.getId()).contains(conversationId)) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "对话已删除，请新建对话");
+                    }
+                    return createConversation(user, conversationId, messageText);
+                });
         conversation.setConversationType("prompt_assistant");
         conversation.setUpdatedAt(LocalDateTime.now());
         conversationRepository.save(conversation);
 
-        List<ChatMessage> existing = messageRepository.findByConversationId(conversation.getId());
+        List<ChatMessage> existing = messageRepository.findByConversationId(conversation.getId()).stream()
+                .sorted(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(ChatMessage::getId, Comparator.nullsFirst(Comparator.naturalOrder())))
+                .toList();
         ChatMessage previousUserMessage = existing.stream()
                 .filter(item -> clientMessageId.equals(item.getClientId()))
                 .findFirst().orElse(null);
-        ChatMessage previousAssistantMessage = previousUserMessage == null ? null : existing.stream()
-                .filter(item -> "assistant".equals(item.getRole()) && item.getCreatedAt() != null
-                        && previousUserMessage.getCreatedAt() != null
-                        && item.getCreatedAt().isAfter(previousUserMessage.getCreatedAt()))
+        String assistantId = request.getAssistantMessageId() == null || request.getAssistantMessageId().isBlank()
+                ? "assistant-" + clientMessageId
+                : normalize(request.getAssistantMessageId(), 120, "assistantMessageId");
+        if (assistantId.length() > 120 || assistantId.equals(clientMessageId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回复消息 ID 无效");
+        }
+        ChatMessage previousAssistantMessage = existing.stream()
+                .filter(item -> assistantId.equals(item.getClientId()))
                 .findFirst().orElse(null);
-        if (previousUserMessage != null && previousAssistantMessage != null) {
+        // Compatibility with the old client, whose placeholder used a random ID.
+        if (previousAssistantMessage == null && previousUserMessage != null
+                && request.getAssistantMessageId() == null) {
+            int index = existing.indexOf(previousUserMessage);
+            if (index + 1 < existing.size()) {
+                ChatMessage next = existing.get(index + 1);
+                if ("assistant".equals(next.getRole()) && next.getGenerationRecordId() == null
+                        && next.getVideoTaskCode() == null) {
+                    previousAssistantMessage = next;
+                }
+            }
+        }
+        if (previousAssistantMessage != null && !"assistant".equals(previousAssistantMessage.getRole())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回复消息 ID 已被占用");
+        }
+        if (previousAssistantMessage != null && "completed".equals(previousAssistantMessage.getIntent())
+                && previousAssistantMessage.getContent() != null && !previousAssistantMessage.getContent().isBlank()) {
             return responseFromStored(conversationId, clientMessageId, previousAssistantMessage);
         }
 
@@ -98,31 +151,38 @@ public class PromptAssistantService {
 
         List<Map<String, String>> messages = new ArrayList<>();
         messages.add(Map.of("role", "system", "content", systemPrompt()));
-        existing.stream()
+        List<ChatMessage> history = existing.stream()
+                .filter(item -> !clientMessageId.equals(item.getClientId()))
                 .filter(item -> "user".equals(item.getRole()) || "assistant".equals(item.getRole()))
-                .sorted((a, b) -> {
-                    LocalDateTime at = a.getCreatedAt();
-                    LocalDateTime bt = b.getCreatedAt();
-                    if (at == null && bt == null) return Integer.compare(a.getId(), b.getId());
-                    if (at == null) return -1;
-                    if (bt == null) return 1;
-                    return at.compareTo(bt);
-                })
-                .skip(Math.max(0, existing.size() - MAX_CONTEXT_MESSAGES))
+                .filter(item -> item.getContent() != null && !item.getContent().isBlank())
+                .filter(item -> !"assistant".equals(item.getRole()) || "completed".equals(item.getIntent()))
+                .toList();
+        history.stream().skip(Math.max(0, history.size() - MAX_CONTEXT_MESSAGES))
                 .forEach(item -> messages.add(Map.of(
                         "role", item.getRole(),
                         "content", contextContent(item))));
         messages.add(Map.of("role", "user", "content", messageText));
 
-        JsonNode result = callDeepSeek(messages);
-        AssistantChatResponse parsed = parseResult(result);
-        ChatMessage assistantMessage = new ChatMessage();
+        ChatMessage assistantMessage = previousAssistantMessage != null ? previousAssistantMessage : new ChatMessage();
         assistantMessage.setConversationId(conversation.getId());
-        assistantMessage.setClientId("assistant-" + clientMessageId);
+        if (assistantMessage.getClientId() == null) assistantMessage.setClientId(assistantId);
         assistantMessage.setRole("assistant");
+        assistantMessage.setIntent("processing");
+        messageRepository.save(assistantMessage);
+        AssistantChatResponse parsed;
+        try {
+            parsed = parseResult(callDeepSeek(messages));
+        } catch (ResponseStatusException e) {
+            assistantMessage.setIntent("failed");
+            assistantMessage.setContent(e.getReason());
+            assistantMessage.setMetadata("{\"kind\":\"prompt_assistant\"}");
+            messageRepository.save(assistantMessage);
+            throw e;
+        }
         assistantMessage.setContent(parsed.getReply());
         assistantMessage.setIntent("completed");
         assistantMessage.setMetadata(objectMapper.valueToTree(Map.of(
+                "kind", "prompt_assistant",
                 "prompt", nullToEmpty(parsed.getPrompt()),
                 "negativePrompt", nullToEmpty(parsed.getNegativePrompt()),
                 "questions", parsed.getQuestions(),
@@ -152,6 +212,7 @@ public class PromptAssistantService {
             body.put("model", model);
             body.put("messages", messages);
             body.put("temperature", 0.6);
+            body.put("max_tokens", 2048);
             body.put("response_format", Map.of("type", "json_object"));
             Request request = new Request.Builder()
                     .url(baseUrl.replaceAll("/$", "") + "/chat/completions")
@@ -175,12 +236,16 @@ public class PromptAssistantService {
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("DeepSeek assistant request error: {}", e.getMessage());
+            log.warn("DeepSeek assistant request error: {}", e.getClass().getSimpleName());
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "提示词助手连接失败");
         }
     }
 
     private AssistantChatResponse parseResult(JsonNode result) {
+        if (result == null || !result.isObject() || !result.path("reply").isTextual()
+                || result.path("reply").asText().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "提示词助手未返回有效回复，请重试");
+        }
         AssistantChatResponse response = new AssistantChatResponse();
         response.setReply(text(result, "reply", "我已经根据你的要求整理了提示词。"));
         response.setPrompt(text(result, "prompt", ""));
@@ -238,6 +303,8 @@ public class PromptAssistantService {
                     client = new OkHttpClient.Builder()
                             .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
                             .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+                            .callTimeout(readTimeoutMs + connectTimeoutMs, TimeUnit.MILLISECONDS)
+                            .retryOnConnectionFailure(false)
                             .build();
                 }
             }
@@ -248,7 +315,10 @@ public class PromptAssistantService {
     private String normalize(String value, int maxLength, String field) {
         String normalized = value == null ? "" : value.trim();
         if (normalized.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + "不能为空");
-        return normalized.length() > maxLength ? normalized.substring(0, maxLength) : normalized;
+        if (normalized.length() > maxLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + "长度超出限制");
+        }
+        return normalized;
     }
 
     private String text(JsonNode node, String field, String fallback) {

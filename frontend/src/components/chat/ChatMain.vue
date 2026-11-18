@@ -278,6 +278,50 @@ function toggleContactMenu() {
   if (showContactMenu.value) showAccountMenu.value = false
 }
 
+async function requestAssistantReply(conv, userMessage, assistantMessage) {
+  assistantSending.value = true
+  error.value = ''
+  scrollToBottom()
+  try {
+    await convStore.syncRemote().catch(() => false)
+    const { data } = await api.post('/chat/assistant/messages', {
+      conversationId: conv.id,
+      clientMessageId: userMessage.id,
+      assistantMessageId: assistantMessage.id,
+      message: userMessage.content
+    }, { timeout: 150000 })
+    if (data.code !== 200) throw new Error(data.message || '提示词助手请求失败')
+    if (!data.data?.reply?.trim()) throw new Error('助手没有返回有效回复，请重试')
+    convStore.updateAssistantMessage(assistantMessage.id, data.data)
+    convStore.syncRemote().catch(() => false)
+  } catch (e) {
+    await convStore.loadRemote().catch(() => false)
+    const latest = convStore.conversations.find(item => item.id === conv.id)
+      ?.messages.find(item => item.id === assistantMessage.id)
+    if (latest?.status !== 'completed' || !latest?.content?.trim()) {
+      const msg = e.response?.data?.message || e.message || '提示词助手请求失败'
+      error.value = msg
+      convStore.failAssistantMessage(assistantMessage.id, msg)
+      convStore.syncRemote().catch(() => false)
+    }
+  } finally {
+    assistantSending.value = false
+    scrollToBottom()
+  }
+}
+
+async function retryAssistantReply(message) {
+  if (assistantSending.value) return
+  const conv = conversation()
+  const index = conv?.messages.findIndex(item => item.id === message.id) ?? -1
+  const userMessage = conv?.messages[index - 1]
+  if (!conv || userMessage?.role !== 'user') return
+  message.assistant ||= { kind: 'prompt_assistant' }
+  message.status = 'processing'
+  message.errorMessage = null
+  await requestAssistantReply(conv, userMessage, message)
+}
+
 async function send() {
   if (userStore.generating || uploading.value || assistantSending.value) {
     return
@@ -299,27 +343,7 @@ async function send() {
     error.value = ''
     const exchange = convStore.addExchange(conv.id, { prompt: text, type: 'prompt_assistant' })
     prompt.value = ''
-    assistantSending.value = true
-    scrollToBottom()
-    try {
-      await convStore.syncRemote().catch(() => false)
-      const { data } = await api.post('/chat/assistant/messages', {
-        conversationId: conv.id,
-        clientMessageId: exchange.userMsg.id,
-        message: text
-      })
-      if (data.code !== 200) throw new Error(data.message || '提示词助手请求失败')
-      convStore.updateAssistantMessage(exchange.assistantMsg.id, data.data)
-      convStore.syncRemote().catch(() => false)
-    } catch (e) {
-      const msg = e.response?.data?.message || e.message || '提示词助手请求失败'
-      error.value = msg
-      convStore.failAssistantMessage(exchange?.assistantMsg?.id, msg)
-      convStore.syncRemote().catch(() => false)
-    } finally {
-      assistantSending.value = false
-    }
-    scrollToBottom()
+    await requestAssistantReply(conv, exchange.userMsg, exchange.assistantMsg)
     return
   }
   const isImg2img = conv.type === 'img2img'
@@ -483,7 +507,9 @@ onActivated(applyPendingPrompt)
         :key="msg.id"
         :message="msg"
         :assistant-mode="currentType === 'prompt_assistant'"
+        :assistant-busy="assistantSending"
         @apply-prompt="applyAssistantPrompt"
+        @retry-assistant="retryAssistantReply"
       />
     </div>
 
@@ -554,7 +580,7 @@ onActivated(applyPendingPrompt)
         </div>
 
         <p v-if="error" class="error">{{ error }}</p>
-        <p class="hint">Enter &#x53D1;&#x9001; · Shift+Enter &#x6362;&#x884C; · &#x6BCF;&#x6B21; 20 &#x79EF;&#x5206;</p>
+        <p class="hint">Enter 发送 · Shift+Enter 换行 · {{ isPromptAssistant ? 'AI 提示词对话' : '每次 20 积分' }}</p>
       </div>
     </div>
   </div>

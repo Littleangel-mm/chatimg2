@@ -338,7 +338,10 @@ public class ChatHistoryService {
             message.setRole(role);
             boolean statusRegression = isTerminalStatus(message.getIntent())
                     && !message.getIntent().equals(dto.getStatus());
-            if (!statusRegression) {
+            boolean storedAssistantReply = "assistant".equals(role) && message.getMetadata() != null
+                    && message.getMetadata().contains("\"prompt_assistant\"")
+                    && "completed".equals(message.getIntent());
+            if (!statusRegression && !storedAssistantReply) {
                 String incomingContent = resolveContent(dto, role);
                 if (incomingContent != null && (!incomingContent.isBlank() || message.getContent() == null)) {
                     message.setContent(incomingContent);
@@ -362,7 +365,8 @@ public class ChatHistoryService {
                     && videoTaskRepository.existsByTaskCodeAndUserId(videoTaskCode, userId)) {
                 message.setVideoTaskCode(videoTaskCode);
             }
-            if (dto.getMetadata() != null && dto.getMetadata().length() <= 20000) {
+            if (!statusRegression && !storedAssistantReply
+                    && dto.getMetadata() != null && dto.getMetadata().length() <= 20000) {
                 message.setMetadata(dto.getMetadata());
             }
             if (message.getCreatedAt() == null) {

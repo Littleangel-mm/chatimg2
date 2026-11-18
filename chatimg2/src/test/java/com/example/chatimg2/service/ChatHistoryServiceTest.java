@@ -138,6 +138,24 @@ class ChatHistoryServiceTest {
     }
 
     @Test
+    void staleSyncCannotOverwriteCompletedAssistantTextOrPrompt() {
+        ChatMessage existing = message("assistant-text", "completed", null, null);
+        existing.setContent("这是模型实际返回的答案");
+        String metadata = "{\"kind\":\"prompt_assistant\",\"prompt\":\"Full prompt\"}";
+        existing.setMetadata(metadata);
+        when(messageRepository.findByConversationId(31)).thenReturn(List.of(existing));
+        ChatMessageDto stale = messageDto("assistant-text", "processing", null, null);
+        stale.setContent("");
+        stale.setMetadata("{\"kind\":\"prompt_assistant\"}");
+
+        ReflectionTestUtils.invokeMethod(chatHistoryService, "upsertMessages", 31, List.of(stale), 7);
+
+        assertEquals("completed", existing.getIntent());
+        assertEquals("这是模型实际返回的答案", existing.getContent());
+        assertEquals(metadata, existing.getMetadata());
+    }
+
+    @Test
     void terminalFailedMessageCannotBeRevivedByStaleClient() {
         ChatMessage existing = message("assistant-1", "failed", 92, null);
         existing.setContent("generation failed");
