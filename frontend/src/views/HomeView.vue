@@ -22,6 +22,7 @@ onMounted(() => {
 </script>
 
 <template>
+  <div class="home-page">
   <div class="chat-layout">
     <div
       v-if="mobileSidebar"
@@ -36,15 +37,65 @@ onMounted(() => {
     <ChatMain @open-sidebar="mobileSidebar = true" />
     <KeyModal />
   </div>
+  <footer
+    class="site-filing"
+    :class="{ 'site-filing--sidebar-open': convStore.sidebarOpen }"
+    aria-label="网站备案信息"
+  >
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
+      蜀ICP备2023012180号-3
+    </a>
+    <a
+      href="https://beian.mps.gov.cn/#/query/webSearch?code=51152802000149"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      川公网安备51152802000149号
+    </a>
+  </footer>
+  </div>
 </template>
 
 <style scoped>
-.chat-layout {
+.home-page {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
   background: var(--bg);
+}
+
+.chat-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.site-filing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 24px;
+  flex-shrink: 0;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.site-filing a {
+  white-space: nowrap;
+}
+
+.site-filing a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
 }
 
 .sidebar-wrap {
@@ -56,7 +107,20 @@ onMounted(() => {
   display: none;
 }
 
+@media (min-width: 769px) {
+  .site-filing--sidebar-open {
+    padding-left: calc(var(--sidebar-width) + 16px);
+  }
+}
+
 @media (max-width: 768px) {
+  .site-filing {
+    column-gap: 16px;
+    padding-top: 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    font-size: 11px;
+  }
+
   .sidebar-wrap {
     position: fixed;
     left: 0;
